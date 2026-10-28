@@ -4,5 +4,5 @@ __pycache__/
 .ipynb_checkpoints/
 data/crudos/
 data/procesados/entrenamiento.tsv
-salidas/*.pt
-salidas/checkpoint*/
+salidas/modelo_m2m100/
+salidas/checkpoints_temporales/

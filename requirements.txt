@@ -1,2 +1,9 @@
 requests
 tqdm
+pandas
+torch
+transformers>=4.41,<5
+sentencepiece
+sacrebleu
+accelerate>=0.26
+huggingface_hub

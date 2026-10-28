@@ -88,3 +88,60 @@ MAX_PARES_POR_CORPUS_Y_PAR = 400_000
 # es -> en -> ro -> de -> es comparando contra la oración original real.
 N_VALIDACION = 1000
 N_PRUEBA = 2000
+
+# =========================================================
+# MODELO: Transformer preentrenado multilingüe (M2M100)
+# =========================================================
+# M2M100 traduce directamente entre cualquier par de sus 100 idiomas sin
+# pasar por inglés como intermediario (a diferencia de MarianMT/opus-mt, que
+# son modelos bilingües, uno por par), y sus códigos de idioma son de 2
+# letras idénticos a los de IDIOMAS (de, en, es, ro) -- no hace falta
+# ninguna tabla de conversión entre nuestros códigos y los del modelo.
+MODELO_BASE = "facebook/m2m100_418M"
+
+RUTA_MODELO_DIR = RUTA_SALIDAS / "modelo_m2m100"  # modelo afinado (NO va a Git, ~1.9 GB)
+RUTA_HISTORICO_CSV = RUTA_SALIDAS / "historico_entrenamiento.csv"
+RUTA_RESULTADOS_DIRECTOS_CSV = RUTA_SALIDAS / "resultados_directos.csv"
+RUTA_RESULTADOS_CADENAS_CSV = RUTA_SALIDAS / "resultados_cadenas.csv"
+
+# Repositorio de Hugging Face donde se comparte el modelo ya afinado: los
+# pesos pesan ~1.9 GB y GitHub rechaza archivos de más de 100 MB. Mismo
+# patrón que el dataset de Identificador_Rostros, pero aquí es un repo de
+# MODELOS, no de datasets, y a diferencia de GitHub, push_to_hub() puede
+# crearlo solo (no hace falta crearlo a mano antes).
+HF_REPO_MODELO = "GadiGG/traductor-escom"
+
+# =========================================================
+# AFINAMIENTO (entrenar.py)
+# =========================================================
+# 4.18M pares de entrenamiento x 2 direcciones son demasiados para afinar en
+# una sesión de Colab gratuita. Se toma una muestra pareja por dirección para
+# que ninguna dirección domine el afinamiento (igual que el recorte de
+# Europarl en preparar_datos.py, misma idea aplicada aquí).
+EJEMPLOS_POR_DIRECCION = 15_000  # x 12 direcciones = 180,000 ejemplos de afinamiento
+MAX_TOKENS = 96  # en subpalabras, no en palabras; 80 palabras (MAX_PALABRAS) caben holgado
+
+EPOCAS = 2
+TAMANO_LOTE = 16
+ACUMULACION_GRADIENTE = 2  # lote efectivo = 32
+TASA_APRENDIZAJE = 3e-5
+PASOS_CALENTAMIENTO = 500
+EJEMPLOS_EVAL_POR_DIRECCION = 40  # solo para medir pérdida durante el afinamiento, no el BLEU real
+
+# =========================================================
+# EVALUACIÓN (evaluar.py)
+# =========================================================
+# Directa: se traduce cada columna de prueba.tsv a cada una de las otras 3
+# idiomas (12 direcciones) y se compara con la traducción real de TED2020
+# usando BLEU y chrF (ambas métricas estándar de traducción automática).
+TAMANO_LOTE_GENERACION = 32
+LONGITUD_MAXIMA_GENERACION = 96
+
+# En cadena (round-trip): la tarea real de la práctica. Desde cada uno de
+# los 4 idiomas de inicio se prueban las 6 permutaciones posibles de los
+# otros 3 (4 saltos de traducción por cadena) y se compara el texto final
+# contra el ORIGINAL -- no hace falta traducción humana de referencia, es
+# la misma oración de donde salió la cadena. Se usa un subconjunto de
+# prueba.tsv porque son 4 idiomas x 6 órdenes x 4 saltos = 96 traducciones
+# por cada oración de prueba.
+N_ORACIONES_CADENAS = 100
