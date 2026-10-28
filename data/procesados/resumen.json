@@ -1,0 +1,80 @@
+{
+  "multiparalelas_disponibles": 182472,
+  "validacion": 1000,
+  "prueba": 2000,
+  "entrenamiento_total": 4178522,
+  "por_corpus_y_par": {
+    "TED2020 de-en": {
+      "crudos": 296354,
+      "limpios": 283834,
+      "descartados_por_fuga": 3004,
+      "usados": 283834
+    },
+    "TED2020 de-es": {
+      "crudos": 294916,
+      "limpios": 282941,
+      "descartados_por_fuga": 3008,
+      "usados": 282941
+    },
+    "TED2020 de-ro": {
+      "crudos": 266754,
+      "limpios": 255765,
+      "descartados_por_fuga": 3005,
+      "usados": 255765
+    },
+    "TED2020 en-es": {
+      "crudos": 416846,
+      "limpios": 399743,
+      "descartados_por_fuga": 3010,
+      "usados": 399743
+    },
+    "TED2020 en-ro": {
+      "crudos": 328491,
+      "limpios": 314924,
+      "descartados_por_fuga": 3002,
+      "usados": 314924
+    },
+    "TED2020 es-ro": {
+      "crudos": 325544,
+      "limpios": 312597,
+      "descartados_por_fuga": 3006,
+      "usados": 312597
+    },
+    "Europarl de-en": {
+      "crudos": 1961119,
+      "limpios": 1896904,
+      "descartados_por_fuga": 5,
+      "usados": 400000
+    },
+    "Europarl de-es": {
+      "crudos": 1887879,
+      "limpios": 1822622,
+      "descartados_por_fuga": 10,
+      "usados": 400000
+    },
+    "Europarl de-ro": {
+      "crudos": 385663,
+      "limpios": 373058,
+      "descartados_por_fuga": 3,
+      "usados": 373058
+    },
+    "Europarl en-es": {
+      "crudos": 2009073,
+      "limpios": 1937964,
+      "descartados_por_fuga": 7,
+      "usados": 400000
+    },
+    "Europarl en-ro": {
+      "crudos": 400356,
+      "limpios": 384138,
+      "descartados_por_fuga": 1,
+      "usados": 384138
+    },
+    "Europarl es-ro": {
+      "crudos": 387653,
+      "limpios": 371522,
+      "descartados_por_fuga": 3,
+      "usados": 371522
+    }
+  }
+}

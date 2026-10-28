@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.venv/
+.ipynb_checkpoints/
+data/crudos/
+data/procesados/entrenamiento.tsv
+salidas/*.pt
+salidas/checkpoint*/
