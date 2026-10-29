@@ -1,6 +1,8 @@
 """
-Traduce con el modelo ya afinado (salidas/modelo_m2m100/; si no existe, usa
-el M2M100 preentrenado sin afinar y avisa).
+Traduce con el modelo ya afinado. Busca, en orden: el modelo local
+(salidas/modelo_m2m100/, el que deja entrenar.py), el modelo compartido del
+equipo en Hugging Face (config.HF_REPO_MODELO, se descarga solo la primera
+vez y queda en caché), y por último el M2M100 preentrenado sin afinar.
 
 Traducción directa entre dos idiomas:
     python predecir.py --texto "Hola, ¿cómo estás?" --origen es --destino en
@@ -33,11 +35,17 @@ def cargar_modelo():
         if config.RUTA_MODELO_DIR.exists():
             ruta = config.RUTA_MODELO_DIR
         else:
-            ruta = config.MODELO_BASE
-            print(f"Aviso: no se encontró un modelo afinado en {config.RUTA_MODELO_DIR}. "
-                  f"Corre 'python entrenar.py' primero. Usando {ruta} sin afinar por ahora.")
-        _tokenizer = M2M100Tokenizer.from_pretrained(ruta)
-        _modelo = M2M100ForConditionalGeneration.from_pretrained(ruta)
+            ruta = config.HF_REPO_MODELO
+            print(f"Aviso: no hay modelo afinado local en {config.RUTA_MODELO_DIR}. "
+                  f"Descargando el del equipo desde https://huggingface.co/{config.HF_REPO_MODELO} "
+                  f"(solo la primera vez, luego queda en caché)...")
+        try:
+            _tokenizer = M2M100Tokenizer.from_pretrained(ruta)
+            _modelo = M2M100ForConditionalGeneration.from_pretrained(ruta)
+        except Exception as error:
+            print(f"Aviso: no se pudo cargar {ruta} ({error}). Usando {config.MODELO_BASE} sin afinar.")
+            _tokenizer = M2M100Tokenizer.from_pretrained(config.MODELO_BASE)
+            _modelo = M2M100ForConditionalGeneration.from_pretrained(config.MODELO_BASE)
         _modelo.eval()
         if torch.cuda.is_available():
             _modelo.to("cuda")

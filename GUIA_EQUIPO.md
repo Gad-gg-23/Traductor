@@ -14,6 +14,8 @@ Modelo afinado, compartido en Hugging Face (no en GitHub, pesa ~1.9 GB):
 
 Entra una oración en español, inglés, rumano o alemán; el modelo la traduce a los otros tres idiomas en **cualquier orden** y siempre puede regresarla al idioma original (es → en → ro → de → es, ro → de → es → en → ro, etc. — las 12 direcciones de traducción, 1 solo modelo).
 
+**¿Solo quieres probar el modelo ya entrenado?** No hace falta Colab ni GPU — salta directo a la [Parte 5](#parte-5--probar-con-tu-propia-oración). El notebook (Parte 1) solo es necesario si vas a **re-entrenar o mejorar** el modelo.
+
 ---
 
 ## Parte 0 — Lo que hace el admin, una sola vez
@@ -89,9 +91,16 @@ M2M100 traduce directo entre cualquier par de sus idiomas (no pasa por inglés c
 
 ## Parte 5 — Probar con tu propia oración
 
-Desde la terminal (local, con el modelo ya afinado en `salidas/modelo_m2m100/`, o en la última celda del notebook):
+**No hace falta Colab, GPU, ni entrenar nada para esto** — el modelo del equipo ya está en
+Hugging Face. `predecir.py` lo busca en este orden: 1) una copia local en
+`salidas/modelo_m2m100/` (si tú entrenaste), 2) si no hay, lo descarga solo de
+[huggingface.co/GadiGG/traductor-escom](https://huggingface.co/GadiGG/traductor-escom) (la
+primera vez tarda por el tamaño, ~1.9 GB; luego queda en caché y ya no se vuelve a descargar).
 
 ```bash
+cd Traductor
+pip install -r requirements.txt
+
 # Traducción directa a un solo idioma
 python predecir.py --texto "Hola, ¿cómo estás?" --origen es --destino en
 
