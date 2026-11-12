@@ -1,158 +1,205 @@
-# Traductor multilingüe: español · inglés · rumano · alemán
+# Cuatro Voces — traductor multilingüe
 
-Práctica de Machine Learning (ESCOM, IPN). Entra una oración en un idioma,
-se traduce a los otros tres en cualquier orden y se regresa al idioma
-original. Ejemplo:
+Traductor local para **español, inglés, rumano y alemán** construido sobre
+`facebook/m2m100_418M`. Un solo modelo cubre las 12 direcciones y puede recorrer
+los otros tres idiomas en cualquier orden antes de volver al original.
 
+```text
+es → en → ro → de → es
+ro → de → es → en → ro
 ```
-es -> en -> ro -> de -> es
-ro -> de -> es -> en -> ro
-... (todas las permutaciones)
-```
 
-Son 4 idiomas × 3 destinos = **12 direcciones de traducción**. El plan es un
-solo Transformer multilingüe al que se le indica el idioma destino con una
-etiqueta al inicio de la entrada (ej. `<2ro> Hola, ¿cómo estás?`), en vez de
-12 modelos separados.
+Incluye interfaz gráfica, CLI, preparación reproducible de OPUS, entrenamiento
+reanudable, evaluación BLEU/chrF, diagnóstico y pruebas automatizadas.
 
-## Inicio rápido
+## Probar el traductor
+
+Se recomienda Python 3.10–3.13 y al menos 4 GB libres. El primer uso descarga el
+modelo afinado (~1.94 GB); después queda en la caché de Hugging Face.
 
 ```bash
+python -m venv .venv
+source .venv/bin/activate             # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-python Traductor.py descargar   # ~875 MB desde OPUS -> data/crudos/ (unos minutos)
-python Traductor.py preparar    # limpia y arma los conjuntos -> data/procesados/ (~3 min)
-python Traductor.py entrenar    # afina M2M100 (necesita GPU, ver colab/Traductor_Colab.ipynb)
-python Traductor.py evaluar     # BLEU/chrF directo y en cadena sobre prueba.tsv
+python Traductor.py diagnostico
+python Traductor.py interfaz
+```
+
+La interfaz se abre en `http://127.0.0.1:7860` y ofrece:
+
+- traducción directa entre dos idiomas;
+- una cadena en el orden elegido;
+- comparación de las seis rutas posibles;
+- perfiles rápido, equilibrado y máxima calidad;
+- estado verificable del modelo cargado;
+- ejecución local sin enviar el texto a una API externa.
+
+Para iniciar sin abrir automáticamente el navegador:
+
+```bash
+python Traductor.py interfaz --no-abrir
+```
+
+## Uso por terminal
+
+```bash
+# Directa
+python Traductor.py predecir --texto "Hola, ¿cómo estás?" --origen es --destino en
+
+# es → en → ro → de → es
+python Traductor.py predecir --texto "Hola, ¿cómo estás?" --origen es --cadena en,ro,de
+
+# Las seis permutaciones
 python Traductor.py predecir --texto "Hola, ¿cómo estás?" --origen es --todas-las-cadenas
+
+# Menor latencia en CPU
+python Traductor.py predecir --texto "Hola" --origen es --destino ro --perfil rapida
+
+# Salida estructurada
+python Traductor.py predecir --texto "Hola" --origen es --destino de --json
+
+# Modelo, revisión y dispositivo realmente cargados
+python Traductor.py predecir --info-modelo
 ```
 
-**El equipo entrena en Colab, no localmente** (no hay GPU en esta máquina ni se espera que la haya en las del equipo): ver [`colab/Traductor_Colab.ipynb`](colab/Traductor_Colab.ipynb) y la guía paso a paso en [GUIA_EQUIPO.md](GUIA_EQUIPO.md), que cubre también cómo compartir el modelo entrenado.
+El programa **no sustituye silenciosamente** el modelo afinado por el modelo
+base. Si se desea aceptar esa degradación de calidad, debe autorizarse de forma
+explícita con `--permitir-modelo-base`.
 
-Los corpus **no están en GitHub** (pesan 2.6 GB extraídos y GitHub no acepta
-archivos de más de 100 MB). Cada quien los baja con el script; OPUS es
-público, no hace falta cuenta ni token.
+El perfil predeterminado usa dos candidatos. `--perfil rapida` usa generación
+greedy y es especialmente útil para las cadenas; `--perfil maxima` usa cinco
+candidatos y puede ser varias veces más lento. Las seis rutas reutilizan los
+primeros saltos compartidos para reducir de 24 a 21 generaciones efectivas.
 
-## Datos
+## Diagnóstico
 
-Fuente: [OPUS](https://opus.nlpl.eu), formato *moses* (dos `.txt` alineados
-línea a línea por par de idiomas).
-
-| Corpus | Qué es | Pares por idioma |
-|---|---|---|
-| **TED2020** v1 | Subtítulos de charlas TED: oraciones habladas y cotidianas | 255k – 400k |
-| **Europarl** v8 | Debates del Parlamento Europeo: formal y bien traducido | 370k – 1.9M (recortado a 400k) |
-
-Europarl se recorta a 400k por par para que de/en/es (que tienen ~1.9M) no
-dominen el entrenamiento y el rumano no quede relegado.
-
-### Limpieza (`preparar_datos.py`)
-
-- Normalización Unicode (NFC) y de espacios.
-- Se descartan pares vacíos, de más de 80 palabras, con un lado 2.5× más largo
-  que el otro, o sin traducir (texto idéntico en ambos idiomas).
-- Se eliminan pares duplicados.
-
-### Conjuntos resultantes (`data/procesados/`)
-
-| Archivo | Contenido | ¿En Git? |
-|---|---|---|
-| `entrenamiento.tsv` | 4,178,522 pares (`idioma_a, idioma_b, texto_a, texto_b`); cada par sirve en ambas direcciones → 8.36M ejemplos | No (1.1 GB) |
-| `validacion.tsv` | 1,000 oraciones, columnas `de, en, es, ro` | Sí |
-| `prueba.tsv` | 2,000 oraciones, columnas `de, en, es, ro` | Sí |
-| `resumen.json` | Conteos por corpus y par (crudos / limpios / usados) | Sí |
-
-Pares de entrenamiento por par de idiomas (ambos corpus):
-
-| de-en | de-es | de-ro | en-es | en-ro | es-ro |
-|---|---|---|---|---|---|
-| 683,834 | 682,941 | 628,823 | 799,743 | 699,062 | 684,119 |
-
-**Validación y prueba son multi-paralelas:** cada fila es la *misma* oración en
-los 4 idiomas. Eso permite medir la cadena completa (es → en → ro → de → es)
-y cuánto se pierde en cada salto. Se arman desde TED2020 usando el inglés como
-pivote, con filtros extra: 4–40 palabras, sin anotaciones tipo "(Risas)" o ♫,
-y las 4 versiones de longitud parecida.
-
-**Sin fuga de datos:** cualquier oración de validación/prueba (en cualquier
-idioma) se elimina de todos los pares de entrenamiento. Verificado: 0
-coincidencias.
-
-Para leer los TSV con pandas:
-
-```python
-import csv, pandas as pd
-df = pd.read_csv("data/procesados/prueba.tsv", sep="\t", quoting=csv.QUOTE_NONE,
-                 escapechar="\\", keep_default_na=False)
+```bash
+python Traductor.py diagnostico                 # dependencias, datos y modelo remoto
+python Traductor.py diagnostico --cargar-modelo # prueba también los pesos completos
+python Traductor.py diagnostico --json          # utilizable desde scripts/CI
 ```
 
-(`keep_default_na=False` importa: si no, pandas convierte oraciones como "NA"
-o "null" en valores vacíos.)
+El diagnóstico revisa versiones, espacio disponible, forma de los TSV y la
+revisión inmutable del modelo en Hugging Face.
+
+## Datos y entrenamiento
+
+Los corpus provienen de [OPUS](https://opus.nlpl.eu): TED2020 v1 y Europarl v8.
+No se guardan en Git porque ocupan aproximadamente 2.6 GB extraídos.
+
+```bash
+python Traductor.py descargar
+python Traductor.py preparar
+```
+
+La descarga usa reintentos, archivos temporales, validación de tamaño y CRC del
+ZIP. Los archivos definitivos solo se reemplazan cuando la extracción termina
+correctamente. La preparación también escribe de forma atómica: un corte no
+destruye conjuntos válidos anteriores.
+
+### Limpieza
+
+- normalización Unicode NFC y de espacios;
+- descarte de vacíos, textos demasiado largos, relaciones de longitud
+  sospechosas y pares sin traducir;
+- deduplicación por corpus/par;
+- validación y prueba multi-paralelas mediante pivote inglés;
+- exclusión de las 3,000 oraciones de evaluación de todos los pares de
+  entrenamiento.
+
+| Archivo | Contenido |
+|---|---|
+| `entrenamiento.tsv` | 4.18 M pares aproximados; se regenera localmente |
+| `validacion.tsv` | 1,000 oraciones en los cuatro idiomas |
+| `prueba.tsv` | 2,000 oraciones en los cuatro idiomas |
+| `resumen.json` | conteos y SHA-256 de los conjuntos de evaluación |
+
+### Afinamiento
+
+El entrenamiento está pensado para GPU en
+[`colab/Traductor_Colab.ipynb`](colab/Traductor_Colab.ipynb):
+
+```bash
+python Traductor.py entrenar
+```
+
+- muestreo de reservorio: no carga el TSV de 1.1 GB completo en RAM;
+- 15,000 ejemplos por dirección, 180,000 en total;
+- tokenización por dirección y en fragmentos de 1,000;
+- precisión mixta en CUDA y gradient checkpointing;
+- checkpoint por época y reanudación automática;
+- selección del menor `eval_loss`;
+- guardado transaccional del modelo y metadatos de versiones.
+
+Para conservar checkpoints en Google Drive u otra ubicación persistente:
+
+```bash
+export TRADUCTOR_SALIDAS=/ruta/persistente/salidas
+python Traductor.py entrenar
+```
+
+El tiempo real depende de la GPU y puede ser considerable; no se debe asumir
+que 180,000 ejemplos terminarán en pocos minutos.
+
+## Evaluación
+
+```bash
+python Traductor.py evaluar
+```
+
+Genera atómicamente:
+
+- `salidas/resultados_directos.csv`: BLEU y chrF para las 12 direcciones;
+- `salidas/resultados_cadenas.csv`: 24 cadenas, BLEU, chrF y coincidencia exacta;
+- `salidas/metadata_evaluacion.json`: modelo/revisión, semilla y tamaño de muestra.
+
+BLEU y chrF miden coincidencia textual, no equivalencia semántica perfecta. Para
+una entrega importante se deben conservar estos resultados y complementarlos
+con revisión humana de una muestra por dirección.
+
+## Reproducibilidad del modelo
+
+El modelo compartido es
+[`GadiGG/traductor-escom`](https://huggingface.co/GadiGG/traductor-escom). El
+código fija una revisión concreta en `config.HF_REVISION_MODELO`; una subida
+nueva no altera silenciosamente resultados anteriores.
+
+Transformers está fijado a **5.21.0**, la versión con la que se publicó el
+artefacto actual. El tokenizador guardado por esa versión no es compatible con
+Transformers 4.x; por eso no se debe relajar esa restricción sin ejecutar todas
+las pruebas y volver a validar el modelo.
+
+## Pruebas
+
+```bash
+python -m compileall -q -x '(^|/)(\.venv|\.git)/' .
+python -m unittest discover -v
+```
+
+Las pruebas cubren validación de entradas, cadenas, muestreo balanceado, API de
+la interfaz y enrutamiento de la CLI. GitHub Actions las ejecuta en Python 3.11
+y 3.12.
 
 ## Estructura
 
+```text
+Traductor.py              entrada única
+motor_traduccion.py       carga segura, dispositivos e inferencia
+interfaz.py               servidor web local
+web/                      interfaz HTML/CSS/JS offline
+descargar_datos.py        descarga transaccional de OPUS
+preparar_datos.py         limpieza y particiones
+muestreo.py               muestreo de reservorio
+entrenar.py               afinamiento y checkpoints
+evaluar.py                BLEU/chrF directo y round-trip
+diagnostico.py            verificación de instalación
+tests/                    pruebas automatizadas
 ```
-Traductor.py         punto de entrada (descargar / preparar / entrenar / evaluar / predecir)
-config.py            idiomas, corpus, modelo e hiperparámetros, todo centralizado
-descargar_datos.py   baja y verifica los corpus de OPUS
-preparar_datos.py    limpieza, deduplicación y particiones
-entrenar.py           afina M2M100 sobre data/procesados/entrenamiento.tsv
-evaluar.py            BLEU/chrF directo (12 direcciones) y en cadena (round-trip) sobre prueba.tsv
-predecir.py           traduce una oración: directa, en una cadena específica, o en las 6 permutaciones
-colab/Traductor_Colab.ipynb   notebook para correr todo con GPU gratuita
-GUIA_EQUIPO.md        guía paso a paso para el equipo (Colab, Hugging Face, troubleshooting)
-data/crudos/          corpus tal cual de OPUS             (ignorado por Git)
-data/procesados/      conjuntos listos para entrenar
-salidas/               modelo afinado y métricas            (el modelo, ignorado por Git)
-```
 
-## Modelo
+## Límites conocidos
 
-**`facebook/m2m100_418M`** (Transformer encoder-decoder preentrenado, muchos-a-muchos entre
-100 idiomas), afinado con nuestros datos de OPUS. Se eligió un modelo preentrenado y no uno
-entrenado desde cero porque ya sabe traducir razonablemente bien antes de empezar — en las
-pocas horas de GPU gratuita de Colab, afinarlo da resultados muchísimo mejores que entrenar un
-Transformer desde cero con los mismos datos. Es la misma idea de *transfer learning* que
-`Frutas_Verduras`/`Comida` usan con MobileNetV2, aplicada aquí a traducción.
-
-Por qué M2M100 y no MarianMT (`Helsinki-NLP/opus-mt-*`): MarianMT es **bilingüe**, un modelo
-distinto por cada par de idiomas (necesitaríamos cargar varios modelos para cubrir las 12
-direcciones). M2M100 traduce directo entre cualquier par de sus 100 idiomas con un solo modelo
-— justo lo que pide la práctica — y sus códigos de idioma (`de`, `en`, `es`, `ro`) son
-exactamente los mismos que usamos en todo el proyecto, sin ninguna tabla de conversión.
-
-### Afinamiento (`entrenar.py`)
-
-4,178,522 pares de `entrenamiento.tsv` (x2 direcciones) son demasiados para una sesión de
-Colab gratuita, así que se toma una muestra pareja: **15,000 ejemplos por cada una de las 12
-direcciones** (180,000 en total), 2 épocas, lote efectivo 32, `fp16` si hay GPU. Todo ajustable
-en `config.py` (`EJEMPLOS_POR_DIRECCION`, `EPOCAS`, etc.) si el equipo quiere más calidad a
-cambio de más tiempo de Colab.
-
-El modelo afinado se guarda en `salidas/modelo_m2m100/` — **no va a GitHub** (pesa ~1.9 GB,
-el límite de GitHub es 100 MB por archivo). Se comparte en Hugging Face:
-**[huggingface.co/GadiGG/traductor-escom](https://huggingface.co/GadiGG/traductor-escom)**
-(mismo patrón que el dataset de `Identificador_Rostros`, pero aquí es un repo de modelo). Ver
-Parte 6 de [GUIA_EQUIPO.md](GUIA_EQUIPO.md).
-
-### Evaluación (`evaluar.py`)
-
-Sobre las 2,000 oraciones de `prueba.tsv`, nunca vistas en el afinamiento:
-
-1. **Directa** (`salidas/resultados_directos.csv`): las 12 direcciones, traducción vs.
-   traducción real de TED2020, con **BLEU** y **chrF** (métricas estándar de traducción
-   automática, calculadas con `sacrebleu` para que el número no dependa de cómo cada uno
-   tokenice el texto).
-2. **En cadena** (`salidas/resultados_cadenas.csv`) — la tarea real de la práctica: desde cada
-   uno de los 4 idiomas de inicio se prueban las **6 permutaciones** posibles de los otros 3
-   (4 saltos de traducción por cadena) y se compara el texto final contra el **original** — no
-   hace falta traducción humana de referencia para esta parte, es la misma oración de donde
-   salió la cadena. Usa un subconjunto de 100 oraciones de prueba por costo (4 × 6 × 4 = 96
-   traducciones por oración).
-
-### Inferencia (`predecir.py`)
-
-```bash
-python predecir.py --texto "Hola, ¿cómo estás?" --origen es --destino en              # directa
-python predecir.py --texto "Hola, ¿cómo estás?" --origen es --cadena en,ro,de         # cadena específica
-python predecir.py --texto "Hola, ¿cómo estás?" --origen es --todas-las-cadenas       # las 6 permutaciones
-```
+- Ningún traductor automático garantiza traducciones perfectas.
+- En CPU, cargar y generar con un modelo de ~484 M parámetros puede ser lento.
+- Las seis cadenas realizan 24 traducciones y son mucho más costosas que una
+  traducción directa.
+- El contenido legal, médico o académico crítico requiere revisión humana.

@@ -23,7 +23,10 @@ un paso separado: python evaluar.py
 """
 
 import csv
+import json
+import os
 import shutil
+from importlib.metadata import PackageNotFoundError, version
 
 import pandas as pd
 import torch
@@ -35,8 +38,10 @@ from transformers import (
     Seq2SeqTrainer,
     Seq2SeqTrainingArguments,
 )
+from transformers.trainer_utils import get_last_checkpoint
 
 import config
+from muestreo import muestrear_archivo_direcciones
 
 
 def _leer_tsv(ruta):
@@ -63,20 +68,28 @@ def tokenizar_por_direccion(df, tokenizer):
     for (origen, destino), grupo in df.groupby(["origen", "destino"]):
         tokenizer.src_lang = origen
         tokenizer.tgt_lang = destino
-        codificado = tokenizer(
-            list(grupo.texto_origen),
-            text_target=list(grupo.texto_destino),
-            truncation=True,
-            max_length=config.MAX_TOKENS,
-        )
-        trozos.append(Dataset.from_dict(dict(codificado)))
+        for inicio in range(0, len(grupo), config.TAMANO_CHUNK_TOKENIZACION):
+            chunk = grupo.iloc[inicio : inicio + config.TAMANO_CHUNK_TOKENIZACION]
+            codificado = tokenizer(
+                list(chunk.texto_origen),
+                text_target=list(chunk.texto_destino),
+                truncation=True,
+                max_length=config.MAX_TOKENS,
+            )
+            trozos.append(Dataset.from_dict(dict(codificado)))
+    if not trozos:
+        raise ValueError("No se generó ningún ejemplo tokenizado.")
     return concatenate_datasets(trozos).shuffle(seed=config.SEMILLA)
 
 
 def construir_datasets(tokenizer):
-    entrenamiento = muestrear_direcciones(
-        _leer_tsv(config.RUTA_PROCESADOS / "entrenamiento.tsv"),
-        config.EJEMPLOS_POR_DIRECCION, config.SEMILLA,
+    ruta_entrenamiento = config.RUTA_PROCESADOS / "entrenamiento.tsv"
+    if not ruta_entrenamiento.is_file():
+        raise FileNotFoundError(
+            f"Falta {ruta_entrenamiento}. Ejecuta primero: python Traductor.py preparar"
+        )
+    entrenamiento = muestrear_archivo_direcciones(
+        ruta_entrenamiento, config.EJEMPLOS_POR_DIRECCION, config.SEMILLA,
     )
     print(f"  Afinamiento: {len(entrenamiento):,} ejemplos "
           f"(~{len(entrenamiento) // 12:,} por cada una de las 12 direcciones)")
@@ -111,14 +124,20 @@ def crear_argumentos_entrenamiento(**kwargs):
 
 
 def entrenar():
+    config.RUTA_SALIDAS.mkdir(parents=True, exist_ok=True)
+    ruta_anterior = config.RUTA_SALIDAS / "modelo_m2m100.anterior"
+    if ruta_anterior.exists() and not config.RUTA_MODELO_DIR.exists():
+        print("Recuperando el modelo anterior después de una interrupción de guardado...")
+        os.replace(ruta_anterior, config.RUTA_MODELO_DIR)
+
     print(f"Cargando {config.MODELO_BASE} (preentrenado)...")
     tokenizer = M2M100Tokenizer.from_pretrained(config.MODELO_BASE)
     modelo = M2M100ForConditionalGeneration.from_pretrained(config.MODELO_BASE)
+    modelo.config.use_cache = False
 
     print("Preparando datos de afinamiento...")
     ds_train, ds_val = construir_datasets(tokenizer)
 
-    config.RUTA_SALIDAS.mkdir(parents=True, exist_ok=True)
     ruta_checkpoints = config.RUTA_SALIDAS / "checkpoints_temporales"
     argumentos = crear_argumentos_entrenamiento(
         output_dir=str(ruta_checkpoints),
@@ -128,8 +147,13 @@ def entrenar():
         gradient_accumulation_steps=config.ACUMULACION_GRADIENTE,
         learning_rate=config.TASA_APRENDIZAJE,
         warmup_steps=config.PASOS_CALENTAMIENTO,
-        save_strategy="no",  # el único modelo que importa es el afinado completo, al final
+        save_strategy="epoch",
+        save_total_limit=1,
+        load_best_model_at_end=True,
+        metric_for_best_model="eval_loss",
+        greater_is_better=False,
         fp16=torch.cuda.is_available(),
+        gradient_checkpointing=True,
         logging_steps=50,
         report_to=[],
         seed=config.SEMILLA,
@@ -144,13 +168,61 @@ def entrenar():
     )
 
     print("Afinando (esto tarda varios minutos, va a imprimir el progreso)...")
-    resultado = entrenador.train()
+    ultimo_checkpoint = get_last_checkpoint(str(ruta_checkpoints)) if ruta_checkpoints.exists() else None
+    if ultimo_checkpoint:
+        print(f"Reanudando desde {ultimo_checkpoint}")
+    resultado = entrenador.train(resume_from_checkpoint=ultimo_checkpoint)
 
-    pd.DataFrame(entrenador.state.log_history).to_csv(config.RUTA_HISTORICO_CSV, index=False)
+    historico_temporal = config.RUTA_HISTORICO_CSV.with_suffix(".csv.part")
+    pd.DataFrame(entrenador.state.log_history).to_csv(historico_temporal, index=False)
+    os.replace(historico_temporal, config.RUTA_HISTORICO_CSV)
 
-    config.RUTA_MODELO_DIR.mkdir(parents=True, exist_ok=True)
-    modelo.save_pretrained(config.RUTA_MODELO_DIR)
-    tokenizer.save_pretrained(config.RUTA_MODELO_DIR)
+    if hasattr(modelo, "gradient_checkpointing_disable"):
+        modelo.gradient_checkpointing_disable()
+    modelo.config.use_cache = True
+    if getattr(modelo, "generation_config", None) is not None:
+        modelo.generation_config.use_cache = True
+
+    ruta_nueva = config.RUTA_SALIDAS / "modelo_m2m100.nuevo"
+    shutil.rmtree(ruta_nueva, ignore_errors=True)
+    shutil.rmtree(ruta_anterior, ignore_errors=True)
+    ruta_nueva.mkdir(parents=True)
+    modelo.save_pretrained(ruta_nueva, safe_serialization=True)
+    tokenizer.save_pretrained(ruta_nueva)
+
+    versiones = {}
+    for paquete in ("torch", "transformers", "datasets", "accelerate", "pandas"):
+        try:
+            versiones[paquete] = version(paquete)
+        except PackageNotFoundError:
+            versiones[paquete] = "no disponible"
+    with open(ruta_nueva / "metadata_entrenamiento.json", "w", encoding="utf-8") as f:
+        json.dump(
+            {
+                "modelo_base": config.MODELO_BASE,
+                "semilla": config.SEMILLA,
+                "epocas": config.EPOCAS,
+                "ejemplos_por_direccion": config.EJEMPLOS_POR_DIRECCION,
+                "max_tokens": config.MAX_TOKENS,
+                "training_loss": resultado.training_loss,
+                "versiones": versiones,
+            },
+            f,
+            ensure_ascii=False,
+            indent=2,
+        )
+        f.flush()
+        os.fsync(f.fileno())
+
+    if config.RUTA_MODELO_DIR.exists():
+        os.replace(config.RUTA_MODELO_DIR, ruta_anterior)
+    try:
+        os.replace(ruta_nueva, config.RUTA_MODELO_DIR)
+    except Exception:
+        if ruta_anterior.exists() and not config.RUTA_MODELO_DIR.exists():
+            os.replace(ruta_anterior, config.RUTA_MODELO_DIR)
+        raise
+    shutil.rmtree(ruta_anterior, ignore_errors=True)
     shutil.rmtree(ruta_checkpoints, ignore_errors=True)
 
     print(f"OK: modelo afinado en {config.RUTA_MODELO_DIR}")

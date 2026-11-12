@@ -1,71 +1,85 @@
-"""
-Punto de entrada único del traductor multilingüe (es, en, ro, de).
+"""Punto de entrada único del proyecto."""
 
-    python Traductor.py descargar   -> baja los corpus de OPUS a data/crudos/
-    python Traductor.py preparar    -> limpia y arma entrenamiento/validación/prueba
-    python Traductor.py entrenar    -> afina M2M100 sobre los datos preparados
-    python Traductor.py evaluar     -> BLEU/chrF directo y en cadena (round-trip) sobre prueba.tsv
-    python Traductor.py predecir --texto "..." --origen es --todas-las-cadenas
-"""
+from __future__ import annotations
 
 import argparse
 import sys
 
 
-def comando_descargar(args_restantes):
-    import descargar_datos
-
-    sys.argv = [sys.argv[0]] + args_restantes
-    descargar_datos.main()
-
-
-def comando_preparar():
-    import preparar_datos
-
-    preparar_datos.main()
+DESCRIPCIONES = {
+    "interfaz": "Abre la interfaz gráfica local en el navegador.",
+    "predecir": "Traduce una oración directa o en cadena.",
+    "diagnostico": "Comprueba dependencias, datos y modelo.",
+    "descargar": "Descarga y verifica los corpus de OPUS.",
+    "preparar": "Limpia los corpus y construye los conjuntos.",
+    "entrenar": "Afina M2M100 sobre los datos preparados.",
+    "evaluar": "Calcula BLEU/chrF directo y en cadena.",
+}
 
 
-def comando_entrenar():
-    import entrenar
-
-    entrenar.entrenar()
-
-
-def comando_evaluar():
-    import evaluar
-
-    evaluar.main()
-
-
-def comando_predecir(args_restantes):
-    import predecir
-
-    sys.argv = [sys.argv[0]] + args_restantes
-    predecir.main()
+def construir_parser_raiz() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Traductor multilingüe robusto: español, inglés, rumano y alemán.",
+        epilog="Usa 'python Traductor.py <comando> --help' para ver las opciones de un comando.",
+    )
+    subparsers = parser.add_subparsers(dest="comando", metavar="comando")
+    for comando, descripcion in DESCRIPCIONES.items():
+        subparsers.add_parser(comando, add_help=False, help=descripcion)
+    return parser
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Traductor multilingüe español/inglés/rumano/alemán.")
-    subparsers = parser.add_subparsers(dest="comando", required=True)
-    subparsers.add_parser("descargar", help="Descarga los corpus de OPUS.")
-    subparsers.add_parser("preparar", help="Limpia los corpus y arma los conjuntos.")
-    subparsers.add_parser("entrenar", help="Afina M2M100 sobre los datos preparados.")
-    subparsers.add_parser("evaluar", help="BLEU/chrF directo y en cadena sobre prueba.tsv.")
-    subparsers.add_parser("predecir", help="Traduce una oración (directa o en cadena).")
+def _sin_argumentos(comando: str, argumentos: list[str]):
+    if argumentos:
+        raise SystemExit(f"El comando '{comando}' no acepta argumentos: {' '.join(argumentos)}")
 
-    args, restantes = parser.parse_known_args()
 
-    if args.comando == "descargar":
-        comando_descargar(restantes)
-    elif args.comando == "preparar":
-        comando_preparar()
-    elif args.comando == "entrenar":
-        comando_entrenar()
-    elif args.comando == "evaluar":
-        comando_evaluar()
-    elif args.comando == "predecir":
-        comando_predecir(restantes)
+def main(argv=None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    parser = construir_parser_raiz()
+    if not argv or argv[0] in {"-h", "--help"}:
+        parser.print_help()
+        return 0
+
+    comando, restantes = argv[0], argv[1:]
+    if comando not in DESCRIPCIONES:
+        parser.error(f"comando desconocido: {comando}")
+
+    if comando == "interfaz":
+        import interfaz
+
+        return interfaz.main(restantes)
+    if comando == "predecir":
+        import predecir
+
+        return predecir.main(restantes)
+    if comando == "diagnostico":
+        import diagnostico
+
+        return diagnostico.main(restantes)
+    if comando == "descargar":
+        import descargar_datos
+
+        return descargar_datos.main(restantes) or 0
+    if comando == "preparar":
+        _sin_argumentos(comando, restantes)
+        import preparar_datos
+
+        preparar_datos.main()
+        return 0
+    if comando == "entrenar":
+        _sin_argumentos(comando, restantes)
+        import entrenar
+
+        entrenar.entrenar()
+        return 0
+    if comando == "evaluar":
+        _sin_argumentos(comando, restantes)
+        import evaluar
+
+        evaluar.main()
+        return 0
+    return 1
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

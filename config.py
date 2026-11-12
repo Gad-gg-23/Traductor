@@ -7,10 +7,11 @@ descargar_datos.py, preparar_datos.py y el entrenamiento no se desincronicen.
 La idea de la práctica: entra una oración en un idioma, pasa por los otros
 tres (en cualquier orden) y regresa al idioma original. Eso son 4 idiomas x
 3 destinos = 12 direcciones de traducción. En vez de 12 modelos, el plan es
-UN solo Transformer multilingüe al que se le indica el idioma destino con una
-etiqueta (ej. "<2ro>") al inicio de la oración de entrada.
+UN solo Transformer multilingüe que codifica el idioma fuente en la entrada y
+fuerza el token del idioma destino (ej. ``__ro__``) al comenzar la generación.
 """
 
+import os
 from itertools import combinations
 from pathlib import Path
 
@@ -24,7 +25,7 @@ RUTA_DATOS = RAIZ / "data"
 RUTA_CRUDOS = RUTA_DATOS / "crudos"        # .zip y .txt tal cual vienen de OPUS (NO van a Git)
 RUTA_PROCESADOS = RUTA_DATOS / "procesados"  # train/val/test ya limpios
 
-RUTA_SALIDAS = RAIZ / "salidas"
+RUTA_SALIDAS = Path(os.environ.get("TRADUCTOR_SALIDAS", RAIZ / "salidas")).expanduser().resolve()
 
 # =========================================================
 # IDIOMAS
@@ -110,6 +111,11 @@ RUTA_RESULTADOS_CADENAS_CSV = RUTA_SALIDAS / "resultados_cadenas.csv"
 # MODELOS, no de datasets, y a diferencia de GitHub, push_to_hub() puede
 # crearlo solo (no hace falta crearlo a mano antes).
 HF_REPO_MODELO = "GadiGG/traductor-escom"
+# Revisión inmutable del modelo que fue validada por el equipo. Evita que una
+# subida posterior cambie silenciosamente los resultados de una instalación.
+# Para publicar una versión nueva: subirla, validar las 12 direcciones y
+# actualizar este SHA junto con las métricas.
+HF_REVISION_MODELO = "3b6e1ba63d07eadeffdb11bb75425f5adc9e5f70"
 
 # =========================================================
 # AFINAMIENTO (entrenar.py)
@@ -127,6 +133,7 @@ ACUMULACION_GRADIENTE = 2  # lote efectivo = 32
 TASA_APRENDIZAJE = 3e-5
 PASOS_CALENTAMIENTO = 500
 EJEMPLOS_EVAL_POR_DIRECCION = 40  # solo para medir pérdida durante el afinamiento, no el BLEU real
+TAMANO_CHUNK_TOKENIZACION = 1000
 
 # =========================================================
 # EVALUACIÓN (evaluar.py)
@@ -135,7 +142,27 @@ EJEMPLOS_EVAL_POR_DIRECCION = 40  # solo para medir pérdida durante el afinamie
 # idiomas (12 direcciones) y se compara con la traducción real de TED2020
 # usando BLEU y chrF (ambas métricas estándar de traducción automática).
 TAMANO_LOTE_GENERACION = 32
-LONGITUD_MAXIMA_GENERACION = 96
+MAX_TOKENS_ENTRADA = 256
+LONGITUD_MAXIMA_GENERACION = 256
+NO_REPEAT_NGRAM_SIZE = 3
+PERFIL_GENERACION_PREDETERMINADO = "equilibrada"
+PERFILES_GENERACION = {
+    "rapida": {"num_beams": 1, "descripcion": "Menor latencia; útil en CPU y cadenas."},
+    "equilibrada": {"num_beams": 2, "descripcion": "Balance recomendado entre velocidad y calidad."},
+    "maxima": {"num_beams": 5, "descripcion": "Más candidatos; consume bastante más tiempo y memoria."},
+}
+
+# Límites defensivos compartidos por CLI e interfaz. El modelo admite entradas
+# mayores, pero una petición descontrolada puede bloquear una máquina sin GPU.
+MAX_CARACTERES_ENTRADA = 5_000
+MAX_BYTES_PETICION_WEB = 64 * 1024
+MAX_TRADUCCIONES_EN_CACHE = 256
+
+# Red: descargas grandes deben tolerar cortes transitorios sin dejar archivos
+# incompletos con el nombre definitivo.
+INTENTOS_DESCARGA = 5
+TIMEOUT_CONEXION = 15
+TIMEOUT_LECTURA = 90
 
 # En cadena (round-trip): la tarea real de la práctica. Desde cada uno de
 # los 4 idiomas de inicio se prueban las 6 permutaciones posibles de los

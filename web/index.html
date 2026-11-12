@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#eef2ed">
+  <meta name="description" content="Traductor multilingüe para español, inglés, rumano y alemán.">
+  <title>Traductor</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="Cuatro Voces, inicio">
+        <span class="brand-mark" aria-hidden="true">CV</span>
+        <strong>Cuatro Voces</strong>
+        <span class="brand-sub">Traductor multilingüe</span>
+      </a>
+
+      <button class="model-chip" id="loadModel" type="button" title="Comprobar o cargar el modelo en memoria">
+        <span class="status-dot" id="modelChip" data-state="idle" aria-hidden="true"></span>
+        <span id="modelStatus">Comprobar modelo</span>
+      </button>
+    </header>
+
+    <main>
+      <header class="intro">
+        <h1 id="pageTitle">Una frase, <em>cuatro voces.</em></h1>
+        <p class="mode-note" id="modeNote">Traducción directa entre dos idiomas.</p>
+      </header>
+
+      <section class="workspace" aria-label="Área de traducción">
+        <form class="composer" id="translateForm">
+          <!-- Barra superior: Modos + Ejemplo -->
+          <div class="controls-bar">
+            <fieldset class="mode-switch">
+              <legend class="sr-only">Modo de traducción</legend>
+              <button type="button" class="mode-button active" data-mode="directa" aria-pressed="true">Directa</button>
+              <button type="button" class="mode-button" data-mode="cadena" aria-pressed="false">Cadena</button>
+              <button type="button" class="mode-button" data-mode="todas" aria-pressed="false">6 rutas</button>
+            </fieldset>
+
+            <button type="button" class="subtle-button" id="sampleButton" title="Insertar una oración de prueba">
+              Frase de ejemplo
+            </button>
+          </div>
+
+          <!-- Configuración de idiomas (se adapta limpiamente a cada modo) -->
+          <div class="language-section" id="languageControls" data-mode="directa">
+            <div class="lang-primary-row">
+              <div class="lang-field">
+                <label class="field-label" for="sourceLang" id="sourceLangLabel">Origen</label>
+                <select id="sourceLang" name="origen"></select>
+              </div>
+
+              <button class="swap-button" id="swapLanguages" type="button" aria-label="Intercambiar idiomas" title="Intercambiar idiomas">⇄</button>
+
+              <div class="lang-field" id="directControl">
+                <label class="field-label" for="targetLang">Destino</label>
+                <select id="targetLang" name="destino"></select>
+              </div>
+
+              <div class="route-summary" id="routeSummary" hidden>
+                <span class="field-label">Recorrido completo</span>
+                <div class="route-badges" id="routePreview" aria-label="Ruta de traducción"></div>
+              </div>
+            </div>
+
+            <div class="chain-control" id="chainControl" hidden>
+              <span class="field-label">Orden de paso por los otros 3 idiomas</span>
+              <div class="chain-selects" id="chainSelects"></div>
+            </div>
+          </div>
+
+          <!-- Lienzo de escritura -->
+          <div class="text-field">
+            <label class="sr-only" for="sourceText">Texto a traducir</label>
+            <textarea id="sourceText" name="texto" maxlength="5000" rows="6" required placeholder="Escribe o pega una frase aquí…"></textarea>
+            <div class="text-tools">
+              <span class="shortcut-hint">Ctrl / ⌘ + Enter</span>
+              <div class="text-tools-right">
+                <button type="button" class="quiet-link" id="clearButton" hidden>Limpiar</button>
+                <span id="charCount">0 / 5,000</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Pie del formulario: Precisión + Botón Traducir -->
+          <div class="form-footer">
+            <div class="profile-control">
+              <label for="generationProfile">Calidad</label>
+              <select id="generationProfile" name="perfil" title="Equilibrio entre rapidez y exploración de candidatos">
+                <option value="rapida">Rápida</option>
+                <option value="equilibrada" selected>Equilibrada</option>
+                <option value="maxima">Máxima precisión</option>
+              </select>
+            </div>
+
+            <button class="primary-button" id="translateButton" type="submit">
+              <span>Traducir</span><span aria-hidden="true">→</span>
+            </button>
+          </div>
+        </form>
+
+        <!-- Panel de resultados -->
+        <section class="result-panel" id="resultPanel" aria-labelledby="resultTitle" aria-live="polite">
+          <div class="result-empty" id="resultEmpty">
+            <div class="empty-glyph" aria-hidden="true">A · Ä · Ă</div>
+            <h2 id="resultTitle">La traducción aparecerá aquí</h2>
+            <p>Elige el modo a la izquierda y presiona Traducir.</p>
+          </div>
+          <div id="resultContent" hidden></div>
+        </section>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <span>Motor: <strong id="systemModel">M2M100 afinado</strong> 
+      
+    </footer>
+  </div>
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>

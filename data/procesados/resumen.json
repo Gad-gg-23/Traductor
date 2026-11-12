@@ -76,5 +76,9 @@
       "descartados_por_fuga": 3,
       "usados": 371522
     }
+  },
+  "sha256": {
+    "validacion.tsv": "e1f92501ecaf57f0302c85434064abf0ee284ae4f89721e97e2b904f00584fa9",
+    "prueba.tsv": "40d1c439baef58b9d48c481690c6a76ccacd65ba3307354768fb435c5d4f7160"
   }
 }

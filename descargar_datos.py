@@ -14,11 +14,16 @@ Resultado:
 """
 
 import argparse
+import os
+import shutil
 import sys
+import time
 import zipfile
 
 import requests
+from requests.adapters import HTTPAdapter
 from tqdm import tqdm
+from urllib3.util.retry import Retry
 
 import config
 
@@ -68,33 +73,93 @@ def descargar(corpus, par):
     carpeta = config.RUTA_CRUDOS / corpus / par
     carpeta.mkdir(parents=True, exist_ok=True)
     ruta_zip = carpeta / f"{par}.txt.zip"
+    ruta_parcial = ruta_zip.with_suffix(ruta_zip.suffix + ".part")
 
-    with requests.get(url, stream=True, timeout=60) as r:
-        r.raise_for_status()
-        total = int(r.headers.get("content-length", 0))
-        with open(ruta_zip, "wb") as f, tqdm(total=total, unit="B", unit_scale=True,
-                                             desc=f"  {corpus} {par}") as barra:
-            for chunk in r.iter_content(chunk_size=1 << 20):
-                f.write(chunk)
-                barra.update(len(chunk))
+    reintentos = Retry(
+        total=config.INTENTOS_DESCARGA,
+        connect=config.INTENTOS_DESCARGA,
+        status=config.INTENTOS_DESCARGA,
+        backoff_factor=1,
+        status_forcelist=(429, 500, 502, 503, 504),
+        allowed_methods=frozenset({"GET"}),
+    )
+    sesion = requests.Session()
+    sesion.mount("https://", HTTPAdapter(max_retries=reintentos))
+    for intento in range(1, config.INTENTOS_DESCARGA + 1):
+        try:
+            with sesion.get(
+                url,
+                stream=True,
+                timeout=(config.TIMEOUT_CONEXION, config.TIMEOUT_LECTURA),
+            ) as respuesta:
+                respuesta.raise_for_status()
+                total = int(respuesta.headers.get("content-length", 0))
+                descargados = 0
+                with open(ruta_parcial, "wb") as f, tqdm(
+                    total=total or None,
+                    unit="B",
+                    unit_scale=True,
+                    desc=f"  {corpus} {par}",
+                ) as barra:
+                    for chunk in respuesta.iter_content(chunk_size=1 << 20):
+                        if not chunk:
+                            continue
+                        f.write(chunk)
+                        descargados += len(chunk)
+                        barra.update(len(chunk))
+                    f.flush()
+                    os.fsync(f.fileno())
+                if total and descargados != total:
+                    raise IOError(f"descarga incompleta: {descargados} de {total} bytes")
+            os.replace(ruta_parcial, ruta_zip)
+            break
+        except (OSError, requests.RequestException) as error:
+            ruta_parcial.unlink(missing_ok=True)
+            if intento == config.INTENTOS_DESCARGA:
+                raise RuntimeError(
+                    f"No se pudo descargar {corpus} {par} tras {intento} intentos: {error}"
+                ) from error
+            espera = min(2 ** (intento - 1), 8)
+            print(f"  intento {intento} falló ({error}); reintentando en {espera}s")
+            time.sleep(espera)
+    sesion.close()
 
-    # Solo se extraen los dos .txt de idiomas (el zip trae también README/LICENSE/.xml)
-    nombres = {r.name for r in archivos_esperados(corpus, par)}
-    with zipfile.ZipFile(ruta_zip) as z:
-        for miembro in z.namelist():
-            if miembro in nombres:
-                z.extract(miembro, carpeta)
-    ruta_zip.unlink()
+    # Se valida el CRC completo antes de reemplazar ningún corpus existente.
+    nombres = {ruta.name for ruta in archivos_esperados(corpus, par)}
+    temporales = []
+    try:
+        with zipfile.ZipFile(ruta_zip) as z:
+            corrupto = z.testzip()
+            if corrupto:
+                raise zipfile.BadZipFile(f"CRC inválido en {corrupto}")
+            disponibles = set(z.namelist())
+            faltantes = nombres - disponibles
+            if faltantes:
+                raise zipfile.BadZipFile("faltan miembros: " + ", ".join(sorted(faltantes)))
+            for nombre in sorted(nombres):
+                destino = carpeta / nombre
+                temporal = destino.with_suffix(destino.suffix + ".part")
+                temporales.append(temporal)
+                with z.open(nombre) as origen, open(temporal, "wb") as salida:
+                    shutil.copyfileobj(origen, salida, length=1 << 20)
+                    salida.flush()
+                    os.fsync(salida.fileno())
+            for temporal in temporales:
+                os.replace(temporal, temporal.with_suffix(""))
+    finally:
+        for temporal in temporales:
+            temporal.unlink(missing_ok=True)
+        ruta_zip.unlink(missing_ok=True)
 
     problema = problema_de_alineacion(corpus, par)
     if problema:
         sys.exit(f"Error en {corpus} {par}: {problema}")
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(description="Descarga los corpus de OPUS.")
     parser.add_argument("--corpus", choices=list(config.CORPUS), help="Descargar solo este corpus.")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     corpus_elegidos = [args.corpus] if args.corpus else list(config.CORPUS)
     for corpus in corpus_elegidos:

@@ -4,5 +4,11 @@ __pycache__/
 .ipynb_checkpoints/
 data/crudos/
 data/procesados/entrenamiento.tsv
+data/procesados/.preparacion_nueva/
 salidas/modelo_m2m100/
+salidas/modelo_m2m100.nuevo/
+salidas/modelo_m2m100.anterior/
 salidas/checkpoints_temporales/
+*.part
+*.log
+.DS_Store

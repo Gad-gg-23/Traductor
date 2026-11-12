@@ -26,15 +26,26 @@ es-ro y luego "acertarla" en la prueba por memoria.
 """
 
 import csv
+import hashlib
 import json
+import os
 import random
 import re
+import shutil
 import unicodedata
 from collections import Counter
 
 import config
 
 ESPACIOS = re.compile(r"\s+")
+
+
+def sha256_archivo(ruta):
+    digest = hashlib.sha256()
+    with open(ruta, "rb") as f:
+        for bloque in iter(lambda: f.read(1 << 20), b""):
+            digest.update(bloque)
+    return digest.hexdigest()
 
 # Para validación/prueba se piden oraciones "de verdad": ni "Gracias." ni
 # párrafos enteros. El filtro de entrenamiento es más permisivo.
@@ -128,11 +139,15 @@ def construir_eval():
 
 
 def guardar_eval(filas, ruta):
-    with open(ruta, "w", encoding="utf-8", newline="") as f:
+    temporal = ruta.with_suffix(ruta.suffix + ".part")
+    with open(temporal, "w", encoding="utf-8", newline="") as f:
         w = csv.DictWriter(f, fieldnames=config.IDIOMAS, delimiter="\t",
                            quoting=csv.QUOTE_NONE, escapechar="\\")
         w.writeheader()
         w.writerows({i: fila[i] for i in config.IDIOMAS} for fila in filas)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(temporal, ruta)
 
 
 # =========================================================
@@ -142,7 +157,8 @@ def guardar_eval(filas, ruta):
 def construir_entrenamiento(prohibidas, ruta_salida):
     resumen = {}
     total = 0
-    with open(ruta_salida, "w", encoding="utf-8", newline="") as f:
+    temporal = ruta_salida.with_suffix(ruta_salida.suffix + ".part")
+    with open(temporal, "w", encoding="utf-8", newline="") as f:
         w = csv.writer(f, delimiter="\t", quoting=csv.QUOTE_NONE, escapechar="\\")
         w.writerow(["idioma_a", "idioma_b", "texto_a", "texto_b"])
 
@@ -176,31 +192,67 @@ def construir_entrenamiento(prohibidas, ruta_salida):
                 }
                 total += len(pares)
                 print(f"  {corpus:9s} {par}: {crudos:>9,} crudos -> {limpios:>9,} limpios -> {len(pares):>7,} usados")
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(temporal, ruta_salida)
     return resumen, total
 
 
 def main():
+    # Fallar antes de sobrescribir conjuntos válidos cuando falta o está
+    # desalineado un corpus crudo.
+    import descargar_datos
+
+    problemas = []
+    for corpus in config.CORPUS:
+        for par in config.PARES:
+            problema = descargar_datos.problema_de_alineacion(corpus, par)
+            if problema:
+                problemas.append(f"{corpus} {par}: {problema}")
+    if problemas:
+        raise RuntimeError(
+            "Los corpus no están listos. Ejecuta 'python Traductor.py descargar'.\n- "
+            + "\n- ".join(problemas)
+        )
+
     config.RUTA_PROCESADOS.mkdir(parents=True, exist_ok=True)
+    staging = config.RUTA_PROCESADOS / ".preparacion_nueva"
+    shutil.rmtree(staging, ignore_errors=True)
+    staging.mkdir(parents=True)
 
     print("Armando validación/prueba multi-paralelas (TED2020, pivote inglés)...")
     val, test, disponibles = construir_eval()
-    guardar_eval(val, config.RUTA_PROCESADOS / "validacion.tsv")
-    guardar_eval(test, config.RUTA_PROCESADOS / "prueba.tsv")
+    guardar_eval(val, staging / "validacion.tsv")
+    guardar_eval(test, staging / "prueba.tsv")
     print(f"  {disponibles:,} oraciones disponibles en los 4 idiomas -> "
           f"{len(val)} validación, {len(test)} prueba")
 
     prohibidas = {clave(fila[i]) for fila in val + test for i in config.IDIOMAS}
 
     print("Limpiando corpus de entrenamiento...")
-    resumen, total = construir_entrenamiento(prohibidas, config.RUTA_PROCESADOS / "entrenamiento.tsv")
+    resumen, total = construir_entrenamiento(prohibidas, staging / "entrenamiento.tsv")
     print(f"  Total entrenamiento: {total:,} pares ({2 * total:,} ejemplos contando ambas direcciones)")
 
-    with open(config.RUTA_PROCESADOS / "resumen.json", "w", encoding="utf-8") as f:
+    ruta_resumen = staging / "resumen.json"
+    temporal_resumen = ruta_resumen.with_suffix(".json.part")
+    with open(temporal_resumen, "w", encoding="utf-8") as f:
         json.dump({
             "multiparalelas_disponibles": disponibles,
             "validacion": len(val), "prueba": len(test),
             "entrenamiento_total": total, "por_corpus_y_par": resumen,
+            "sha256": {
+                "validacion.tsv": sha256_archivo(staging / "validacion.tsv"),
+                "prueba.tsv": sha256_archivo(staging / "prueba.tsv"),
+            },
         }, f, ensure_ascii=False, indent=2)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(temporal_resumen, ruta_resumen)
+    # resumen.json se reemplaza al final y funciona como marcador de que los
+    # otros tres archivos pertenecen a la misma preparación completa.
+    for nombre in ("entrenamiento.tsv", "validacion.tsv", "prueba.tsv", "resumen.json"):
+        os.replace(staging / nombre, config.RUTA_PROCESADOS / nombre)
+    staging.rmdir()
     print(f"OK: datos en {config.RUTA_PROCESADOS}")
 
 

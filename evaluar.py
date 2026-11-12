@@ -20,39 +20,25 @@ Dos evaluaciones, guardadas en salidas/:
 
 import csv
 import itertools
+import json
+import os
 
 import pandas as pd
 import sacrebleu
-import torch
 from tqdm import tqdm
-from transformers import M2M100ForConditionalGeneration, M2M100Tokenizer
 
 import config
+from motor_traduccion import MotorTraduccion
 
 
 def cargar_modelo():
-    if not config.RUTA_MODELO_DIR.exists():
-        raise SystemExit(f"No hay modelo afinado en {config.RUTA_MODELO_DIR}. Corre primero: python entrenar.py")
-    tokenizer = M2M100Tokenizer.from_pretrained(config.RUTA_MODELO_DIR)
-    modelo = M2M100ForConditionalGeneration.from_pretrained(config.RUTA_MODELO_DIR)
-    modelo.eval()
-    if torch.cuda.is_available():
-        modelo.to("cuda")
-    return modelo, tokenizer
+    motor = MotorTraduccion(permitir_modelo_base=False)
+    motor.cargar()
+    return motor
 
 
-@torch.inference_mode()
-def traducir_lote(textos, origen, destino, modelo, tokenizer):
-    tokenizer.src_lang = origen
-    salidas = []
-    for i in range(0, len(textos), config.TAMANO_LOTE_GENERACION):
-        trozo = textos[i:i + config.TAMANO_LOTE_GENERACION]
-        entradas = tokenizer(trozo, return_tensors="pt", padding=True, truncation=True,
-                             max_length=config.MAX_TOKENS).to(modelo.device)
-        generados = modelo.generate(**entradas, forced_bos_token_id=tokenizer.get_lang_id(destino),
-                                    max_length=config.LONGITUD_MAXIMA_GENERACION)
-        salidas.extend(tokenizer.batch_decode(generados, skip_special_tokens=True))
-    return salidas
+def traducir_lote(textos, origen, destino, motor):
+    return motor.traducir_lote(textos, origen, destino)
 
 
 def bleu_chrf(hipotesis, referencias):
@@ -61,17 +47,17 @@ def bleu_chrf(hipotesis, referencias):
     return bleu.score, chrf.score
 
 
-def evaluar_directo(df_prueba, modelo, tokenizer):
+def evaluar_directo(df_prueba, motor):
     filas = []
     direcciones = list(itertools.permutations(config.IDIOMAS, 2))  # las 12, sin repetir origen=destino
     for origen, destino in tqdm(direcciones, desc="  direcciones"):
-        hipotesis = traducir_lote(list(df_prueba[origen]), origen, destino, modelo, tokenizer)
+        hipotesis = traducir_lote(list(df_prueba[origen]), origen, destino, motor)
         bleu, chrf = bleu_chrf(hipotesis, list(df_prueba[destino]))
         filas.append({"origen": origen, "destino": destino, "bleu": round(bleu, 2), "chrf": round(chrf, 2)})
     return pd.DataFrame(filas)
 
 
-def evaluar_cadenas(df_prueba, modelo, tokenizer):
+def evaluar_cadenas(df_prueba, motor):
     muestra = df_prueba.sample(n=min(config.N_ORACIONES_CADENAS, len(df_prueba)), random_state=config.SEMILLA)
     filas = []
     combinaciones = [
@@ -83,34 +69,66 @@ def evaluar_cadenas(df_prueba, modelo, tokenizer):
         originales = list(muestra[origen])
         actuales, idioma_actual = originales, origen
         for siguiente in list(orden) + [origen]:
-            actuales = traducir_lote(actuales, idioma_actual, siguiente, modelo, tokenizer)
+            actuales = traducir_lote(actuales, idioma_actual, siguiente, motor)
             idioma_actual = siguiente
         bleu, chrf = bleu_chrf(actuales, originales)
+        exactas = 100 * sum(a.casefold().strip() == b.casefold().strip() for a, b in zip(actuales, originales)) / len(originales)
         filas.append({"idioma_inicio": origen, "orden": "->".join(orden),
-                      "bleu": round(bleu, 2), "chrf": round(chrf, 2)})
+                      "bleu": round(bleu, 2), "chrf": round(chrf, 2),
+                      "coincidencia_exacta_pct": round(exactas, 2)})
     return pd.DataFrame(filas)
+
+
+def guardar_csv_atomico(df, ruta):
+    ruta.parent.mkdir(parents=True, exist_ok=True)
+    temporal = ruta.with_suffix(ruta.suffix + ".part")
+    df.to_csv(temporal, index=False)
+    os.replace(temporal, ruta)
 
 
 def main():
     print("Cargando modelo afinado...")
-    modelo, tokenizer = cargar_modelo()
+    motor = cargar_modelo()
 
     df_prueba = pd.read_csv(config.RUTA_PROCESADOS / "prueba.tsv", sep="\t",
                             quoting=csv.QUOTE_NONE, escapechar="\\", keep_default_na=False)
+    faltantes = set(config.IDIOMAS) - set(df_prueba.columns)
+    if faltantes:
+        raise ValueError("prueba.tsv no contiene las columnas: " + ", ".join(sorted(faltantes)))
+    if df_prueba.empty:
+        raise ValueError("prueba.tsv está vacío.")
 
     print(f"\nEvaluación directa ({len(df_prueba):,} oraciones por dirección, 12 direcciones)...")
-    directos = evaluar_directo(df_prueba, modelo, tokenizer)
-    directos.to_csv(config.RUTA_RESULTADOS_DIRECTOS_CSV, index=False)
+    directos = evaluar_directo(df_prueba, motor)
+    guardar_csv_atomico(directos, config.RUTA_RESULTADOS_DIRECTOS_CSV)
     print(directos.to_string(index=False))
 
     n_cadenas = min(config.N_ORACIONES_CADENAS, len(df_prueba))
     print(f"\nEvaluación en cadena ({n_cadenas} oraciones, 4 idiomas x 6 órdenes = 24 cadenas)...")
-    cadenas = evaluar_cadenas(df_prueba, modelo, tokenizer)
-    cadenas.to_csv(config.RUTA_RESULTADOS_CADENAS_CSV, index=False)
+    cadenas = evaluar_cadenas(df_prueba, motor)
+    guardar_csv_atomico(cadenas, config.RUTA_RESULTADOS_CADENAS_CSV)
     print(cadenas.to_string(index=False))
 
     print("\nResumen por idioma de inicio (promedio de las 6 permutaciones):")
-    print(cadenas.groupby("idioma_inicio")[["bleu", "chrf"]].mean().round(2).to_string())
+    print(cadenas.groupby("idioma_inicio")[["bleu", "chrf", "coincidencia_exacta_pct"]].mean().round(2).to_string())
+
+    ruta_metadata = config.RUTA_SALIDAS / "metadata_evaluacion.json"
+    temporal = ruta_metadata.with_suffix(".json.part")
+    with open(temporal, "w", encoding="utf-8") as f:
+        json.dump(
+            {
+                "modelo": motor.informacion.como_dict(),
+                "oraciones_directas": len(df_prueba),
+                "oraciones_cadenas": n_cadenas,
+                "semilla": config.SEMILLA,
+                "perfil_generacion": config.PERFIL_GENERACION_PREDETERMINADO,
+                "nota": "BLEU/chrF miden coincidencia textual; deben complementarse con revisión humana.",
+            },
+            f,
+            ensure_ascii=False,
+            indent=2,
+        )
+    os.replace(temporal, ruta_metadata)
 
     print(f"\nOK: resultados en {config.RUTA_RESULTADOS_DIRECTOS_CSV} y {config.RUTA_RESULTADOS_CADENAS_CSV}")
 

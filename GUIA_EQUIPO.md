@@ -42,14 +42,14 @@ El resto de la guía es para **cada compañero**.
 `Entorno de ejecución → Ejecutar todas` (o celda por celda con ▶️, de arriba hacia abajo). Lo que vas a ver pasar, en orden:
 
 1. **Clona el repo** — rápido, segundos.
-2. **Instala lo que falta y verifica la GPU** — `transformers`, `sentencepiece`, `sacrebleu`, `accelerate`. Debe imprimir `GPU disponible: True`. Si dice `False`, te faltó el paso 1.1.2.
+2. **Instala la pila reproducible y verifica la GPU** — usa `requirements-core.txt`, que fija Transformers 5.21.0 para que el tokenizador publicado sea compatible. Debe imprimir `GPU disponible: True`. Si dice `False`, te faltó el paso 1.1.2.
 3. **Descarga los corpus de OPUS** (`Traductor.py descargar`) — ~875 MB, tarda unos minutos. Verifica que cada idioma tenga el mismo número de líneas que su pareja; si algo quedó a medias, lo vuelve a bajar.
 4. **Prepara los datos** (`Traductor.py preparar`) — limpia, quita duplicados, separa validación/prueba (multi-paralelas: la misma oración en los 4 idiomas) y se asegura de que ninguna de esas oraciones esté también en el entrenamiento. Tarda 2-4 minutos.
-5. **Afina el modelo** (`Traductor.py entrenar`) — parte de `facebook/m2m100_418M` (ya sabe traducir entre 100 idiomas) y lo afina con una muestra de nuestros datos de OPUS (180,000 ejemplos repartidos entre las 12 direcciones). Va a imprimir el progreso; **espera a que termine por completo** — al final debe decir `OK: modelo afinado en .../salidas/modelo_m2m100`. Tarda varios minutos en GPU.
+5. **Afina el modelo** (`Traductor.py entrenar`) — parte de `facebook/m2m100_418M` y lo afina con 180,000 ejemplos repartidos entre las 12 direcciones. Guarda un checkpoint por época y reanuda automáticamente si la sesión conserva los archivos. **Espera a que termine por completo**: debe decir `OK: modelo afinado en .../salidas/modelo_m2m100`. Dependiendo de la GPU puede tardar horas, no solo minutos.
 6. **Evalúa** (`Traductor.py evaluar`) — esta es la prueba real de la práctica:
    - **Directa:** traduce las 2,000 oraciones de prueba en las 12 direcciones y las compara con la traducción real de TED2020 (BLEU y chrF, las métricas estándar de traducción automática — más alto es mejor, BLEU de 100 sería traducción perfecta palabra por palabra).
    - **En cadena (round-trip):** desde cada uno de los 4 idiomas se recorren los otros 3 en sus 6 órdenes posibles y se regresa al idioma original, comparando el resultado final contra la oración de partida — sin necesitar ninguna traducción humana de referencia para esta parte.
-   Tarda varios minutos más (son 12 + 24 = 36 evaluaciones con generación de texto).
+   Son 33,600 traducciones de oraciones contando evaluación directa y cadenas; en una T4 puede tardar bastante. No cierres la sesión hasta que se escriban los CSV.
 7. **Ver resultados** — imprime las tablas de BLEU/chrF por dirección y por cadena, más el promedio por idioma de inicio.
 8. **Descargar o subir el modelo** (opcional) — ver Parte 6.
 9. **Probar tu propia oración** (opcional) — ver Parte 5.
@@ -101,15 +101,25 @@ primera vez tarda por el tamaño, ~1.9 GB; luego queda en caché y ya no se vuel
 cd Traductor
 pip install -r requirements.txt
 
+# Interfaz gráfica local (recomendado)
+python Traductor.py interfaz
+
 # Traducción directa a un solo idioma
-python predecir.py --texto "Hola, ¿cómo estás?" --origen es --destino en
+python Traductor.py predecir --texto "Hola, ¿cómo estás?" --origen es --destino en
 
 # Una cadena específica: es -> en -> ro -> de -> es
-python predecir.py --texto "Hola, ¿cómo estás?" --origen es --cadena en,ro,de
+python Traductor.py predecir --texto "Hola, ¿cómo estás?" --origen es --cadena en,ro,de
 
 # Las 6 permutaciones posibles de los otros 3 idiomas, de una sola vez
-python predecir.py --texto "Hola, ¿cómo estás?" --origen es --todas-las-cadenas
+python Traductor.py predecir --texto "Hola, ¿cómo estás?" --origen es --todas-las-cadenas
 ```
+
+Antes de una demostración ejecuta `python Traductor.py diagnostico --cargar-modelo`.
+El programa no usa el modelo base silenciosamente: si el afinado falla, muestra
+el error. `--permitir-modelo-base` existe solo para pruebas deliberadas.
+Si una computadora es lenta, selecciona **Rápida** en la interfaz o agrega
+`--perfil rapida`; para la exposición usa **Equilibrada** salvo que haya tiempo
+para el perfil de máxima calidad.
 
 ---
 
@@ -138,6 +148,11 @@ modelo = M2M100ForConditionalGeneration.from_pretrained("GadiGG/traductor-escom"
 tokenizer = M2M100Tokenizer.from_pretrained("GadiGG/traductor-escom")
 ```
 
+Después de validar un modelo nuevo, copia el SHA de la revisión publicada,
+actualiza `HF_REVISION_MODELO` en `config.py`, vuelve a ejecutar las pruebas y
+conserva también los CSV de evaluación. Mientras no se actualice ese SHA, las
+demás instalaciones seguirán usando de forma reproducible la versión anterior.
+
 ---
 
 ## Problemas comunes
@@ -147,7 +162,7 @@ tokenizer = M2M100Tokenizer.from_pretrained("GadiGG/traductor-escom")
 | `GPU disponible: False` | No activaste GPU | `Entorno de ejecución → Cambiar tipo de entorno de ejecución → GPU` |
 | `Error en <corpus> <par>: incompleto: ...` | La descarga de OPUS se cortó a medias (conexión) | Vuelve a correr `Traductor.py descargar`, retoma solo lo que falta |
 | `Error en <corpus> <par>: desalineado: ...` | El .zip de OPUS llegó corrupto | Borra `data/crudos/<corpus>/<par>/` y vuelve a descargar ese par |
-| `No hay modelo afinado en .../modelo_m2m100` (al correr `evaluar.py` o `predecir.py`) | No corriste `entrenar.py` todavía, o se corrió en otra sesión de Colab que ya se cerró | Corre `python Traductor.py entrenar` primero |
+| `No se pudo cargar el modelo afinado` | Dependencias incompatibles, red, caché corrupta o modelo local incompleto | Ejecuta `python Traductor.py diagnostico --cargar-modelo`; no ocultes el error usando el modelo base |
 | `[Errno 2] No such file or directory: '/content/repo'` | Colab reinició la sesión (VM nueva), se perdió todo lo descargado | `Entorno de ejecución → Ejecutar todas` desde el principio |
 | El `push_to_hub` de la Parte 6 falla con error de permisos | Tu cuenta de Hugging Face no es colaboradora del repo, o el token no tiene permiso Write | Pide que te agreguen como colaborador (Parte 0.2), o genera un token nuevo con permiso **Write** |
 | BLEU muy bajo (cercano a 0) pero chrF razonable | Normal en frases muy cortas o con pocas épocas de afinamiento — BLEU penaliza mucho cuando casi no hay coincidencias exactas de 4 palabras seguidas; chrF (a nivel de caracteres) es más indulgente y suele ser más informativo aquí | No es un bug; si quieres mejorar BLEU, sube `EPOCAS` o `EJEMPLOS_POR_DIRECCION` en `config.py` (tarda más en Colab) |

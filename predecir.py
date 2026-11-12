@@ -1,116 +1,148 @@
-"""
-Traduce con el modelo ya afinado. Busca, en orden: el modelo local
-(salidas/modelo_m2m100/, el que deja entrenar.py), el modelo compartido del
-equipo en Hugging Face (config.HF_REPO_MODELO, se descarga solo la primera
-vez y queda en caché), y por último el M2M100 preentrenado sin afinar.
+"""CLI de inferencia del traductor multilingüe."""
 
-Traducción directa entre dos idiomas:
-    python predecir.py --texto "Hola, ¿cómo estás?" --origen es --destino en
-
-Cadena completa (round-trip): pasa por los otros 3 idiomas en el orden dado
-y regresa al idioma de origen al final:
-    python predecir.py --texto "Hola, ¿cómo estás?" --origen es --cadena en,ro,de
-
-Las 6 permutaciones posibles de los otros 3 idiomas, de una sola vez -- esto
-es exactamente la tarea de la práctica (que entre cualquier orden, siempre
-se pueda regresar al idioma original):
-    python predecir.py --texto "Hola, ¿cómo estás?" --origen es --todas-las-cadenas
-"""
+from __future__ import annotations
 
 import argparse
-from itertools import permutations
-
-import torch
-from transformers import M2M100ForConditionalGeneration, M2M100Tokenizer
+import json
+import sys
 
 import config
+from motor_traduccion import ErrorTraductor, MotorTraduccion
 
-_modelo = None
-_tokenizer = None
-
-
-def cargar_modelo():
-    global _modelo, _tokenizer
-    if _modelo is None:
-        if config.RUTA_MODELO_DIR.exists():
-            ruta = config.RUTA_MODELO_DIR
-        else:
-            ruta = config.HF_REPO_MODELO
-            print(f"Aviso: no hay modelo afinado local en {config.RUTA_MODELO_DIR}. "
-                  f"Descargando el del equipo desde https://huggingface.co/{config.HF_REPO_MODELO} "
-                  f"(solo la primera vez, luego queda en caché)...")
-        try:
-            _tokenizer = M2M100Tokenizer.from_pretrained(ruta)
-            _modelo = M2M100ForConditionalGeneration.from_pretrained(ruta)
-        except Exception as error:
-            print(f"Aviso: no se pudo cargar {ruta} ({error}). Usando {config.MODELO_BASE} sin afinar.")
-            _tokenizer = M2M100Tokenizer.from_pretrained(config.MODELO_BASE)
-            _modelo = M2M100ForConditionalGeneration.from_pretrained(config.MODELO_BASE)
-        _modelo.eval()
-        if torch.cuda.is_available():
-            _modelo.to("cuda")
-    return _modelo, _tokenizer
+_motor: MotorTraduccion | None = None
 
 
-@torch.inference_mode()
+def obtener_motor(permitir_modelo_base: bool = False, dispositivo: str = "auto") -> MotorTraduccion:
+    global _motor
+    if _motor is None:
+        _motor = MotorTraduccion(permitir_modelo_base=permitir_modelo_base, dispositivo=dispositivo)
+    return _motor
+
+
 def traducir(texto, origen, destino):
-    modelo, tokenizer = cargar_modelo()
-    tokenizer.src_lang = origen
-    entradas = tokenizer(texto, return_tensors="pt", truncation=True, max_length=config.MAX_TOKENS)
-    entradas = {k: v.to(modelo.device) for k, v in entradas.items()}
-    generados = modelo.generate(
-        **entradas,
-        forced_bos_token_id=tokenizer.get_lang_id(destino),
-        max_length=config.LONGITUD_MAXIMA_GENERACION,
-    )
-    return tokenizer.batch_decode(generados, skip_special_tokens=True)[0]
+    """Compatibilidad con quienes importaban la función de versiones anteriores."""
+    return obtener_motor().traducir(texto, origen, destino)
 
 
 def traducir_cadena(texto, origen, orden):
-    """orden: los otros 3 idiomas en el orden en que se visitan. Regresa a
-    origen al final. Resultado: lista [(idioma, texto), ...] con cada paso,
-    empezando por el texto original."""
-    pasos = [(origen, texto)]
-    idioma_actual, texto_actual = origen, texto
-    for siguiente in list(orden) + [origen]:
-        texto_actual = traducir(texto_actual, idioma_actual, siguiente)
-        idioma_actual = siguiente
-        pasos.append((idioma_actual, texto_actual))
-    return pasos
+    pasos = obtener_motor().traducir_cadena(texto, origen, orden)
+    return [(paso["idioma"], paso["texto"]) for paso in pasos]
 
 
 def imprimir_cadena(pasos):
-    print("  " + " -> ".join(idioma for idioma, _ in pasos))
-    for idioma, texto in pasos:
-        print(f"    [{idioma}] {texto}")
+    normalizados = [
+        paso if isinstance(paso, dict) else {"idioma": paso[0], "texto": paso[1]}
+        for paso in pasos
+    ]
+    print("  " + " -> ".join(paso["idioma"] for paso in normalizados))
+    for paso in normalizados:
+        print(f"    [{paso['idioma']}] {paso['texto']}")
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Traduce con el M2M100 afinado del equipo.")
-    parser.add_argument("--texto", required=True)
-    parser.add_argument("--origen", required=True, choices=config.IDIOMAS)
-    grupo = parser.add_mutually_exclusive_group(required=True)
-    grupo.add_argument("--destino", choices=config.IDIOMAS, help="Traducción directa a un solo idioma.")
-    grupo.add_argument("--cadena", help="Idiomas separados por coma, en el orden a visitar "
-                                        "(regresa a --origen al final). Ej: en,ro,de")
-    grupo.add_argument("--todas-las-cadenas", action="store_true",
-                       help="Prueba las 6 permutaciones posibles de los otros 3 idiomas.")
-    args = parser.parse_args()
+def construir_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="Traductor.py predecir",
+        description="Traduce con el modelo M2M100 afinado y validado del equipo.",
+    )
+    parser.add_argument("--texto", help="Texto que se va a traducir.")
+    parser.add_argument("--origen", choices=config.IDIOMAS, help="Idioma del texto de entrada.")
+    grupo = parser.add_mutually_exclusive_group()
+    grupo.add_argument("--destino", choices=config.IDIOMAS, help="Traducción directa.")
+    grupo.add_argument("--cadena", help="Los otros tres idiomas separados por coma; ej. en,ro,de.")
+    grupo.add_argument(
+        "--todas-las-cadenas", action="store_true", help="Ejecuta las seis permutaciones posibles."
+    )
+    parser.add_argument("--info-modelo", action="store_true", help="Carga y muestra el modelo en uso.")
+    parser.add_argument("--json", action="store_true", help="Entrega un resultado JSON para automatización.")
+    parser.add_argument(
+        "--dispositivo", choices=["auto", "cpu", "cuda", "mps"], default="auto"
+    )
+    parser.add_argument(
+        "--perfil",
+        choices=list(config.PERFILES_GENERACION),
+        default=config.PERFIL_GENERACION_PREDETERMINADO,
+        help="rapida prioriza latencia; maxima explora más candidatos.",
+    )
+    parser.add_argument(
+        "--permitir-modelo-base",
+        action="store_true",
+        help="Autoriza explícitamente usar M2M100 sin afinar si falla el modelo del equipo.",
+    )
+    return parser
 
-    otros = [i for i in config.IDIOMAS if i != args.origen]
 
-    if args.destino:
-        print(traducir(args.texto, args.origen, args.destino))
-    elif args.cadena:
-        orden = args.cadena.split(",")
-        if sorted(orden) != sorted(otros):
-            parser.error(f"--cadena debe listar exactamente estos idiomas (en cualquier orden): {otros}")
-        imprimir_cadena(traducir_cadena(args.texto, args.origen, orden))
-    else:
-        for orden in permutations(otros):
-            imprimir_cadena(traducir_cadena(args.texto, args.origen, orden))
+def _validar_argumentos(parser, args):
+    if args.info_modelo and not args.texto:
+        return
+    if not args.texto:
+        parser.error("--texto es obligatorio para traducir")
+    if not args.origen:
+        parser.error("--origen es obligatorio para traducir")
+    if not (args.destino or args.cadena or args.todas_las_cadenas):
+        parser.error("elige --destino, --cadena o --todas-las-cadenas")
+
+
+def main(argv=None) -> int:
+    parser = construir_parser()
+    args = parser.parse_args(argv)
+    _validar_argumentos(parser, args)
+    motor = MotorTraduccion(args.permitir_modelo_base, args.dispositivo)
+
+    try:
+        if args.info_modelo and not args.texto:
+            resultado = {"modelo": motor.cargar().como_dict()}
+        elif args.destino:
+            traduccion = motor.traducir(args.texto, args.origen, args.destino, args.perfil)
+            resultado = {
+                "modo": "directa",
+                "origen": args.origen,
+                "destino": args.destino,
+                "entrada": args.texto,
+                "traduccion": traduccion,
+                "perfil": args.perfil,
+                "modelo": motor.informacion.como_dict(),
+            }
+        elif args.cadena:
+            orden = [idioma.strip() for idioma in args.cadena.split(",")]
+            pasos = motor.traducir_cadena(args.texto, args.origen, orden, args.perfil)
+            resultado = {
+                "modo": "cadena",
+                "origen": args.origen,
+                "orden": orden,
+                "pasos": pasos,
+                "perfil": args.perfil,
+                "modelo": motor.informacion.como_dict(),
+            }
+        else:
+            cadenas = motor.traducir_todas_las_cadenas(args.texto, args.origen, args.perfil)
+            resultado = {
+                "modo": "todas_las_cadenas",
+                "origen": args.origen,
+                "cadenas": cadenas,
+                "perfil": args.perfil,
+                "modelo": motor.informacion.como_dict(),
+            }
+    except ErrorTraductor as error:
+        if args.json:
+            print(json.dumps({"error": str(error)}, ensure_ascii=False))
+        else:
+            print(f"Error: {error}", file=sys.stderr)
+        return 2
+
+    if args.json:
+        print(json.dumps(resultado, ensure_ascii=False, indent=2))
+    elif resultado.get("modo") == "directa":
+        print(resultado["traduccion"])
+    elif resultado.get("modo") == "cadena":
+        imprimir_cadena(resultado["pasos"])
+    elif resultado.get("modo") == "todas_las_cadenas":
+        for cadena in resultado["cadenas"]:
+            imprimir_cadena(cadena["pasos"])
             print()
+    else:
+        print(json.dumps(resultado, ensure_ascii=False, indent=2))
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
