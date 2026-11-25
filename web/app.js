@@ -239,15 +239,51 @@ function isExactMatch(a, b) {
   return String(a).trim().toLowerCase() === String(b).trim().toLowerCase();
 }
 
+function normText(t) {
+  return String(t)
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, "").replace(/\s+/g, " ").trim();
+}
+
+function isUntranslated(original, text) {
+  const o = normText(original);
+  return /\p{L}/u.test(o) && o.split(" ").length >= 2 && o === normText(text);
+}
+
+function copiedSteps(steps) {
+  const first = steps[0]?.texto || "";
+  const copies = [];
+  for (let i = 1; i < steps.length - 1; i++) {
+    if (isUntranslated(first, steps[i].texto)) copies.push(i);
+  }
+  return copies;
+}
+
 function stepsHtml(steps) {
   const firstText = steps[0]?.texto || "";
-  return `<div class="step-list">${steps
+  const copies = copiedSteps(steps);
+  const middleCount = Math.max(steps.length - 2, 0);
+  const allCopied = middleCount > 0 && copies.length === middleCount;
+
+  const warning = allCopied
+    ? `<div class="step-warning" role="alert"><strong>Sin traducir.</strong> Ningún paso intermedio cambió el texto: el modelo copió la entrada. El regreso coincide porque nunca hubo traducción.</div>`
+    : copies.length
+      ? `<div class="step-warning" role="alert"><strong>Posible fallo.</strong> ${copies.length === 1 ? "Un paso devolvió" : `${copies.length} pasos devolvieron`} el texto original sin traducir.</div>`
+      : "";
+
+  return `${warning}<div class="step-list">${steps
     .map((step, index) => {
       const isLast = index === steps.length - 1;
+      const isCopy = copies.includes(index);
       const exact = isLast && isExactMatch(firstText, step.texto);
-      const badge = isLast
-        ? `<span class="match-tag ${exact ? "is-exact" : ""}">${exact ? "Exacta" : "Variación"}</span>`
-        : "";
+      let badge = "";
+      if (isLast) {
+        badge = allCopied
+          ? `<span class="match-tag is-warn">Sin traducir</span>`
+          : `<span class="match-tag ${exact ? "is-exact" : ""}">${exact ? "Exacta" : "Variación"}</span>`;
+      } else if (isCopy) {
+        badge = `<span class="match-tag is-warn">Copia del original</span>`;
+      }
       const label =
         index === 0
           ? `Original · ${languages[step.idioma]}`
@@ -255,7 +291,7 @@ function stepsHtml(steps) {
             ? `Regreso · ${languages[step.idioma]}`
             : `Paso ${index} · ${languages[step.idioma]}`;
       return `
-    <div class="step">
+    <div class="step${isCopy ? " is-copy" : ""}">
       <span class="step-code">${escapeHtml(step.idioma)}</span>
       <small>${escapeHtml(label)} ${badge}</small>
       <p>${escapeHtml(step.texto)}</p>
@@ -286,6 +322,7 @@ function renderResult(data, elapsedMs) {
         </div>
       </div>
       <p class="translation-output">${escapeHtml(data.traduccion)}</p>
+      ${isUntranslated(sourceText.value, data.traduccion) && data.origen !== data.destino ? `<div class="step-warning" role="alert"><strong>Sin traducir.</strong> La salida es igual a la entrada: el modelo no tradujo este texto.</div>` : ""}
       <div class="result-meta">
         <span>M2M100 afinado</span>
         <span>${formatMeta(data, elapsedMs)}</span>
@@ -347,9 +384,10 @@ function renderResult(data, elapsedMs) {
       ${data.cadenas
         .map((chain, index) => {
           const ret = chain.pasos[chain.pasos.length - 1].texto;
+          const flagged = copiedSteps(chain.pasos).length > 0;
           return `<details class="chain-group" ${index === 0 ? "open" : ""}>
             <summary>
-              <span class="summary-route">${routeLabel(chain.pasos)}</span>
+              <span class="summary-route">${routeLabel(chain.pasos)}${flagged ? ' <span class="summary-flag" title="Algún paso devolvió el texto sin traducir">⚠</span>' : ""}</span>
               <span class="summary-preview">${escapeHtml(ret)}</span>
             </summary>
             ${stepsHtml(chain.pasos)}
@@ -521,3 +559,47 @@ $("#swapLanguages").addEventListener("click", () => {
 
 $("#loadModel").addEventListener("click", loadModel);
 form.addEventListener("submit", submitTranslation);
+
+(() => {
+  const q = (s) => document.querySelector(s);
+
+  const modeSwitch = q(".mode-switch");
+  function movePill() {
+    const active = modeSwitch?.querySelector(".mode-button.active");
+    if (!active) return;
+    modeSwitch.style.setProperty("--pill-x", `${active.offsetLeft}px`);
+    modeSwitch.style.setProperty("--pill-w", `${active.offsetWidth}px`);
+    modeSwitch.classList.add("has-pill");
+  }
+  document.querySelectorAll(".mode-button").forEach((b) =>
+    b.addEventListener("click", () => requestAnimationFrame(movePill)),
+  );
+  window.addEventListener("resize", movePill);
+  requestAnimationFrame(movePill);
+  document.fonts?.ready.then(movePill);
+
+  const btn = q("#translateButton");
+  const panel = q("#resultPanel");
+  new MutationObserver(() => panel.classList.toggle("is-busy", btn.disabled))
+    .observe(btn, { attributes: true, attributeFilter: ["disabled"] });
+
+  const swap = q("#swapLanguages");
+  const row = q(".lang-primary-row");
+  let turns = 0;
+  swap.addEventListener("click", () => {
+    turns += 1;
+    swap.style.setProperty("--rot", `${turns * 180}deg`);
+    row.classList.remove("swapped");
+    void row.offsetWidth;
+    row.classList.add("swapped");
+  });
+
+  const count = q("#charCount");
+  const area = q("#sourceText");
+  const paintCount = () => {
+    const n = area.value.length;
+    count.dataset.level = n >= 4800 ? "limit" : n >= 4000 ? "warn" : "ok";
+  };
+  new MutationObserver(paintCount).observe(count, { childList: true, characterData: true, subtree: true });
+  paintCount();
+})();
