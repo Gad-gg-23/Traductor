@@ -150,7 +150,10 @@ def main(argv=None):
     if args.json:
         print(json.dumps(resultados, ensure_ascii=False, indent=2))
     else:
-        simbolos = {"ok": "✓", "aviso": "!", "error": "✗"}
+        # ASCII a propósito: la consola de Windows en español suele usar
+        # cp1252, que no puede codificar ✓/✗ y hace fallar el diagnóstico
+        # justo cuando se corre antes de una demo.
+        simbolos = {"ok": "[OK]", "aviso": "[AVISO]", "error": "[ERROR]"}
         for item in resultados:
             print(f"{simbolos[item['estado']]} {item['comprobacion']}: {item['detalle']}")
     return 1 if any(item["estado"] == "error" for item in resultados) else 0

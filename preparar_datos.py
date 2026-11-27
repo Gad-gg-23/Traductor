@@ -141,8 +141,12 @@ def construir_eval():
 def guardar_eval(filas, ruta):
     temporal = ruta.with_suffix(ruta.suffix + ".part")
     with open(temporal, "w", encoding="utf-8", newline="") as f:
+        # lineterminator="\n": el csv de la librería estándar escribe \r\n
+        # por defecto incluso en Linux/Mac, lo que no coincide con el
+        # "eol=lf" de .gitattributes ni con el SHA-256 guardado en
+        # resumen.json si alguien vuelve a correr este script.
         w = csv.DictWriter(f, fieldnames=config.IDIOMAS, delimiter="\t",
-                           quoting=csv.QUOTE_NONE, escapechar="\\")
+                           quoting=csv.QUOTE_NONE, escapechar="\\", lineterminator="\n")
         w.writeheader()
         w.writerows({i: fila[i] for i in config.IDIOMAS} for fila in filas)
         f.flush()
@@ -159,7 +163,7 @@ def construir_entrenamiento(prohibidas, ruta_salida):
     total = 0
     temporal = ruta_salida.with_suffix(ruta_salida.suffix + ".part")
     with open(temporal, "w", encoding="utf-8", newline="") as f:
-        w = csv.writer(f, delimiter="\t", quoting=csv.QUOTE_NONE, escapechar="\\")
+        w = csv.writer(f, delimiter="\t", quoting=csv.QUOTE_NONE, escapechar="\\", lineterminator="\n")
         w.writerow(["idioma_a", "idioma_b", "texto_a", "texto_b"])
 
         for corpus in config.CORPUS:
