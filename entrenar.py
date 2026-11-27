@@ -41,6 +41,7 @@ from transformers import (
 from transformers.trainer_utils import get_last_checkpoint
 
 import config
+from modismos import cargar_modismos, expandir_pares_entrenamiento
 from muestreo import muestrear_archivo_direcciones
 
 
@@ -93,6 +94,14 @@ def construir_datasets(tokenizer):
     )
     print(f"  Afinamiento: {len(entrenamiento):,} ejemplos "
           f"(~{len(entrenamiento) // 12:,} por cada una de las 12 direcciones)")
+
+    if config.RUTA_MODISMOS.is_file():
+        modismos = expandir_pares_entrenamiento(
+            cargar_modismos(config.RUTA_MODISMOS), config.REPETICIONES_MODISMOS
+        )
+        entrenamiento = pd.concat([entrenamiento, modismos], ignore_index=True)
+        print(f"  Modismos: +{len(modismos):,} ejemplos "
+              f"({config.REPETICIONES_MODISMOS}x repetición de {config.RUTA_MODISMOS.name})")
 
     # validacion.tsv es multi-paralela (una columna por idioma): se
     # reconstruyen las 12 direcciones desde ahí para medir la pérdida
@@ -204,6 +213,8 @@ def entrenar():
                 "epocas": config.EPOCAS,
                 "ejemplos_por_direccion": config.EJEMPLOS_POR_DIRECCION,
                 "max_tokens": config.MAX_TOKENS,
+                "modismos_incluidos": config.RUTA_MODISMOS.is_file(),
+                "modismos_repeticiones": config.REPETICIONES_MODISMOS if config.RUTA_MODISMOS.is_file() else 0,
                 "training_loss": resultado.training_loss,
                 "versiones": versiones,
             },

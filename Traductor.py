@@ -14,6 +14,7 @@ DESCRIPCIONES = {
     "preparar": "Limpia los corpus y construye los conjuntos.",
     "entrenar": "Afina M2M100 sobre los datos preparados.",
     "evaluar": "Calcula BLEU/chrF directo y en cadena.",
+    "evaluar-modismos": "Compara modismos antes/después y mide generalización.",
 }
 
 
@@ -77,6 +78,12 @@ def main(argv=None) -> int:
         import evaluar
 
         evaluar.main()
+        return 0
+    if comando == "evaluar-modismos":
+        _sin_argumentos(comando, restantes)
+        import evaluar_modismos
+
+        evaluar_modismos.main()
         return 0
     return 1
 

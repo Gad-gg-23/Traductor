@@ -192,9 +192,33 @@ preparar_datos.py         limpieza y particiones
 muestreo.py               muestreo de reservorio
 entrenar.py               afinamiento y checkpoints
 evaluar.py                BLEU/chrF directo y round-trip
+modismos.py               pares modismo->equivalente para el afinamiento
+evaluar_modismos.py       compara modismos antes/después y generalización
+data/modismos/            modismos.tsv (entrenamiento) y _heldout.tsv (generalización)
 diagnostico.py            verificación de instalación
 tests/                    pruebas automatizadas
 ```
+
+### Modismos (`modismos.py`, `evaluar_modismos.py`)
+
+TED2020 y Europarl casi no enseñan "modismo -> equivalente real": enseñan
+traducción general, así que el modelo tiende a traducir modismos palabra por
+palabra (ver `salidas/modismos_revision_antes.csv`). `data/modismos/modismos.tsv`
+agrega 12 oraciones (6 modismos × 2 variantes) con su equivalente real -no
+literal- en los 4 idiomas; `entrenar.py` las repite `config.REPETICIONES_MODISMOS`
+veces para que no se pierdan entre los millones de pares del corpus general.
+
+`data/modismos/modismos_heldout.tsv` tiene 2 modismos **nunca usados en el
+afinamiento**, para medir generalización real y no solo memorización. Después
+de reentrenar, corre:
+
+```bash
+python Traductor.py evaluar-modismos
+```
+
+y compara `modismos_directos_antes.csv` contra `modismos_directos_despues.csv`
+(memorización), y revisa `modismos_heldout_revision.csv` a mano (generalización
+honesta: BLEU/chrF no bastan para juzgar un modismo nunca visto).
 
 ## Límites conocidos
 

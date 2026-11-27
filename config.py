@@ -136,6 +136,20 @@ EJEMPLOS_EVAL_POR_DIRECCION = 40  # solo para medir pérdida durante el afinamie
 TAMANO_CHUNK_TOKENIZACION = 1000
 
 # =========================================================
+# MODISMOS (modismos.py, evaluar_modismos.py)
+# =========================================================
+# TED2020/Europarl casi no enseñan "modismo -> equivalente real" (ver
+# salidas/modismos_revision_antes.csv: el modelo traduce literal). Este set
+# se arma a mano -con revisión humana, no solo traducción automática- y se
+# repite varias veces al construir el afinamiento para que el muestreo por
+# reservorio del corpus general (millones de pares) no lo deje fuera.
+RUTA_MODISMOS = RUTA_DATOS / "modismos" / "modismos.tsv"
+# Set SEPARADO, nunca usado en el afinamiento: sirve para medir si el modelo
+# generaliza a modismos que nunca vio, no solo si memorizó los de arriba.
+RUTA_MODISMOS_HELDOUT = RUTA_DATOS / "modismos" / "modismos_heldout.tsv"
+REPETICIONES_MODISMOS = 30  # perilla a ajustar; ver docstring en modismos.py
+
+# =========================================================
 # EVALUACIÓN (evaluar.py)
 # =========================================================
 # Directa: se traduce cada columna de prueba.tsv a cada una de las otras 3
