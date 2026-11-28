@@ -62,15 +62,52 @@ El proyecto calcula BLEU y chrF sobre 2,000 oraciones multi-paralelas para las
 `metadata_evaluacion.json` se generan con `python Traductor.py evaluar` y deben
 publicarse junto con cada versión validada.
 
-No se declaran cifras en esta ficha hasta que los resultados de la revisión
-correspondiente estén publicados; existir como archivo no demuestra calidad.
+Promedio de BLEU/chrF por idioma de inicio sobre las 24 cadenas de cuatro
+saltos (round-trip):
+
+| Idioma de inicio | BLEU | chrF |
+|---|---|---|
+| de | 28.62 | 55.85 |
+| en | 33.90 | 57.72 |
+| es | 32.42 | 57.99 |
+| ro | 24.68 | 52.84 |
+
+El rumano rinde más bajo de forma consistente, esperable por tener menos datos
+en OPUS para ese idioma. El detalle completo por dirección y por cadena está en
+`resultados_directos.csv` y `resultados_cadenas.csv`, publicados junto al
+modelo.
+
+### Modismos (afinamiento dirigido)
+
+`data/modismos/modismos.tsv` agrega 12 oraciones (6 modismos × 2 variantes) con
+su equivalente real -no literal- en los 4 idiomas, repetidas durante el
+afinamiento. Resultado:
+
+- **Modismos entrenados:** BLEU subió de ~19–30 a ~99–100 frente al modelo
+  anterior. Es memorización esperada (se repitieron 30x), no evidencia de
+  generalización por sí sola.
+- **Modismos held-out** (2 modismos nunca vistos en el afinamiento, evaluados
+  en las 12 direcciones): la generalización es **parcial**. Cuando la frase de
+  origen es semánticamente transparente el modelo produce un equivalente real
+  razonable (p. ej. alemán "ein Vermögen kosten" → español "costó una
+  fortuna"), pero en la mayoría de direcciones todavía traduce el modismo
+  palabra por palabra (p. ej. "un ojo de la cara" → inglés literal "one eye on
+  his face" en vez de "an arm and a leg"). Con solo 12 ejemplos de
+  entrenamiento no se debe esperar generalización robusta a modismos
+  completamente nuevos; eso requeriría un conjunto mucho más grande.
 
 ## Limitaciones
 
-- Puede producir errores, omisiones o traducciones demasiado literales.
+- Puede producir errores, omisiones o traducciones demasiado literales,
+  especialmente en modismos que no estuvieron en el conjunto de afinamiento
+  dirigido (ver sección Modismos).
 - BLEU/chrF no garantizan equivalencia semántica.
 - TED2020 y Europarl no representan todos los registros ni variedades de cada
   idioma.
+- El rumano "nouă" ("nueva"/"nueve") es ambiguo para el modelo: se observó al
+  menos un caso de confusión real (p. ej. "Mașina aceea nouă..." tradujo
+  "nouă" como el número en vez del adjetivo). Es una limitación heredada del
+  modelo base, no introducida por este afinamiento.
 - Textos médicos, legales o de alto impacto requieren revisión humana.
 
 ## Licencia y fuentes

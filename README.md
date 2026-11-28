@@ -227,3 +227,9 @@ honesta: BLEU/chrF no bastan para juzgar un modismo nunca visto).
 - Las seis cadenas realizan 24 traducciones y son mucho más costosas que una
   traducción directa.
 - El contenido legal, médico o académico crítico requiere revisión humana.
+- Los modismos nunca vistos en el afinamiento (fuera de
+  `data/modismos/modismos.tsv`) se siguen traduciendo literalmente en la
+  mayoría de direcciones; ver `evaluar-modismos` y la sección "Modismos" del
+  `MODEL_CARD.md` para el detalle de qué generaliza y qué no.
+- El rumano "nouă" ("nueva"/"nueve") es ambiguo para el modelo y puede
+  confundirse con el número; es una limitación heredada del modelo base.
