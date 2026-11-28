@@ -115,7 +115,7 @@ HF_REPO_MODELO = "GadiGG/traductor-escom"
 # subida posterior cambie silenciosamente los resultados de una instalación.
 # Para publicar una versión nueva: subirla, validar las 12 direcciones y
 # actualizar este SHA junto con las métricas.
-HF_REVISION_MODELO = "3b6e1ba63d07eadeffdb11bb75425f5adc9e5f70"
+HF_REVISION_MODELO = "45c9f9eafa3f4a21e5bd62d925ccb92674711460"
 
 # =========================================================
 # AFINAMIENTO (entrenar.py)
